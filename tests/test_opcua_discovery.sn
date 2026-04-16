@@ -1,0 +1,41 @@
+# ==============================================================================
+# test_opcua_discovery.sn - getEndpoints() without an active session
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+
+fn test_get_endpoints_unsecured(): void =>
+  print("test_get_endpoints_unsecured: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14890, 0)
+  var endpoints: OpcUaEndpointDescription[] = OpcUaClient.getEndpoints(server.url())
+  assert(endpoints.length >= 1, $"expected >=1 endpoint, got {endpoints.length}")
+
+  # Unsecured server only advertises Policy=None
+  var noneFound: bool = false
+  for ep in endpoints =>
+    if ep.securityPolicyUri() == "http://opcfoundation.org/UA/SecurityPolicy#None" =>
+      noneFound = true
+  assert(noneFound, "unsecured server should advertise the None policy")
+
+  server.stop()
+  print("PASS\n")
+
+fn test_get_endpoints_secured(): void =>
+  print("test_get_endpoints_secured: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14891, 1)
+  var endpoints: OpcUaEndpointDescription[] = OpcUaClient.getEndpoints(server.url())
+  assert(endpoints.length >= 2, $"expected multiple policies advertised, got {endpoints.length}")
+
+  var hasBasic256Sha256: bool = false
+  for ep in endpoints =>
+    if ep.securityPolicyUri() == "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256" =>
+      hasBasic256Sha256 = true
+  assert(hasBasic256Sha256, "secured server should advertise Basic256Sha256")
+
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_get_endpoints_unsecured()
+  test_get_endpoints_secured()

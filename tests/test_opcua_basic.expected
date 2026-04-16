@@ -1,0 +1,6 @@
+test_connect_disconnect: PASS
+test_read_int32: PASS
+test_read_double: PASS
+test_read_string: PASS
+test_write_int32: PASS
+test_write_string: PASS

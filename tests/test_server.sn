@@ -1,0 +1,43 @@
+# ==============================================================================
+# test_server.sn - In-process open62541 OPC UA server used by the test suite
+# ==============================================================================
+# Provides a minimal server preloaded with a "Demo" folder containing:
+#   Demo.Int32          (Int32,  RW)
+#   Demo.Double         (Double, RW)
+#   Demo.String         (String, RW)
+#   Demo.Counter        (Int32,  RW; tests can set/read externally)
+#   Demo.AddNumbers(a,b)→ double
+# ==============================================================================
+
+@source "test_server.sn.c"
+
+@alias "RtOpcUaTestServer"
+native struct OpcUaTestServer as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  @alias "bound_port"
+  _bound_port: int
+
+  # mode: 0 = unsecured anonymous-only
+  #       1 = fully-secured (all policies, anon + user/pass "alice:secret")
+  static fn start(port: int, mode: int): OpcUaTestServer =>
+    return sn_opcua_test_server_start(port, mode)
+
+  @alias "sn_opcua_test_server_port"
+  native fn port(): int
+
+  fn url(): str =>
+    return sn_opcua_test_server_url(self)
+
+  @alias "sn_opcua_test_server_set_counter"
+  native fn setCounter(value: int): void
+
+  @alias "sn_opcua_test_server_stop"
+  native fn stop(): void
+
+  @alias "sn_opcua_test_server_dispose"
+  native fn dispose(): void
+
+native fn sn_opcua_test_server_start(port: int, mode: int): OpcUaTestServer
+native fn sn_opcua_test_server_url(srv: OpcUaTestServer): str

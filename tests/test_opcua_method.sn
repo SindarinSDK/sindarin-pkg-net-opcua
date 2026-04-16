@@ -1,0 +1,33 @@
+# ==============================================================================
+# test_opcua_method.sn - Call Demo.AddNumbers
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+
+fn test_call_add_numbers(): void =>
+  print("test_call_add_numbers: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14860, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  var args: OpcUaVariant[] = {
+    OpcUaVariant.fromDouble(17.5),
+    OpcUaVariant.fromDouble(4.25)
+  }
+
+  var result: OpcUaVariant[] = client.callMethod(
+    OpcUaNodeId.stringId(2, "Demo"),
+    OpcUaNodeId.stringId(2, "Demo.AddNumbers"),
+    args
+  )
+
+  assert(result.length == 1, $"expected 1 output, got {result.length}")
+  var sum: double = result[0].asDouble()
+  assert(sum > 21.74 && sum < 21.76, $"expected 21.75, got {sum}")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_call_add_numbers()

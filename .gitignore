@@ -1,0 +1,9 @@
+.sn/
+bin/
+libs/
+vcpkg/
+tests/pki/
+*.exe
+*.o
+*.so
+*.a

@@ -1,0 +1,81 @@
+# ==============================================================================
+# test_opcua_basic.sn - Connect, read, write (anonymous, unsecured)
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+
+fn test_connect_disconnect(): void =>
+  print("test_connect_disconnect: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14840, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  assert(client.isConnected(), "client should be connected")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_read_int32(): void =>
+  print("test_read_int32: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14841, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  var v: OpcUaVariant = client.readValue(OpcUaNodeId.stringId(2, "Demo.Int32"))
+  assert(!v.isNull(), "value should not be null")
+  assert(v.asInt() == 42, $"expected 42, got {v.asInt()}")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_read_double(): void =>
+  print("test_read_double: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14842, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  var v: OpcUaVariant = client.readValue(OpcUaNodeId.stringId(2, "Demo.Double"))
+  assert(!v.isNull(), "value should not be null")
+  var d: double = v.asDouble()
+  assert(d > 3.13 && d < 3.15, $"expected ~3.14, got {d}")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_read_string(): void =>
+  print("test_read_string: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14843, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  var v: OpcUaVariant = client.readValue(OpcUaNodeId.stringId(2, "Demo.String"))
+  assert(!v.isNull(), "value should not be null")
+  assert(v.asStr() == "hello", $"expected 'hello', got '{v.asStr()}'")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_write_int32(): void =>
+  print("test_write_int32: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14844, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  var nodeId: OpcUaNodeId = OpcUaNodeId.stringId(2, "Demo.Int32")
+  client.writeValue(nodeId, OpcUaVariant.fromInt(9999))
+  var v: OpcUaVariant = client.readValue(nodeId)
+  assert(v.asInt() == 9999, $"expected 9999, got {v.asInt()}")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_write_string(): void =>
+  print("test_write_string: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14845, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+  var nodeId: OpcUaNodeId = OpcUaNodeId.stringId(2, "Demo.String")
+  client.writeValue(nodeId, OpcUaVariant.fromStr("round-trip"))
+  var v: OpcUaVariant = client.readValue(nodeId)
+  assert(v.asStr() == "round-trip", $"expected 'round-trip', got '{v.asStr()}'")
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_connect_disconnect()
+  test_read_int32()
+  test_read_double()
+  test_read_string()
+  test_write_int32()
+  test_write_string()

@@ -1,0 +1,60 @@
+# ==============================================================================
+# test_opcua_browse.sn - Browse the Demo folder
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+
+fn test_browse_objects_folder(): void =>
+  print("test_browse_objects_folder: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14850, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  # Objects folder is ns=0;i=85
+  var refs: OpcUaReferenceDescription[] = client.browse(OpcUaNodeId.numeric(0, 85))
+  assert(refs.length > 0, "Objects folder should have references")
+
+  var foundDemo: bool = false
+  for r in refs =>
+    if r.browseName() == "Demo" =>
+      foundDemo = true
+  assert(foundDemo, "Demo folder should be browsable from Objects")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_browse_demo_folder(): void =>
+  print("test_browse_demo_folder: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14851, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  var refs: OpcUaReferenceDescription[] = client.browse(OpcUaNodeId.stringId(2, "Demo"))
+  assert(refs.length >= 4, $"expected >=4 children in Demo, got {refs.length}")
+
+  var hasInt32: bool = false
+  var hasDouble: bool = false
+  var hasString: bool = false
+  var hasCounter: bool = false
+  var hasAdd: bool = false
+  for r in refs =>
+    var name: str = r.browseName()
+    if name == "Int32" => hasInt32 = true
+    if name == "Double" => hasDouble = true
+    if name == "String" => hasString = true
+    if name == "Counter" => hasCounter = true
+    if name == "AddNumbers" => hasAdd = true
+
+  assert(hasInt32,   "Demo.Int32 should be browsable")
+  assert(hasDouble,  "Demo.Double should be browsable")
+  assert(hasString,  "Demo.String should be browsable")
+  assert(hasCounter, "Demo.Counter should be browsable")
+  assert(hasAdd,     "Demo.AddNumbers should be browsable")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_browse_objects_folder()
+  test_browse_demo_folder()

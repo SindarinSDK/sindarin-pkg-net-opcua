@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "sindarin-net-opcua",
+  "version": "0.0.1",
+  "description": "open62541 OPC UA client library with OpenSSL crypto backend for Sindarin",
+  "dependencies": [
+    {
+      "name": "open62541",
+      "features": ["openssl"]
+    },
+    "openssl"
+  ]
+}

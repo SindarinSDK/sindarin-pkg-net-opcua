@@ -1,0 +1,10 @@
+name: sindarin-pkg-net-opcua
+version: 0.0.1
+license: MIT
+dependencies:
+- name: sindarin-pkg-sdk
+  git: https://github.com/SindarinSDK/sindarin-pkg-sdk.git
+  branch: main
+- name: sindarin-pkg-test
+  git: https://github.com/SindarinSDK/sindarin-pkg-test.git
+  branch: main

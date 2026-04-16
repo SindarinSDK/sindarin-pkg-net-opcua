@@ -1,0 +1,34 @@
+# ==============================================================================
+# test_opcua_security.sn - Encrypted channels with Basic256Sha256
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+
+fn test_basic256sha256_sign_and_encrypt(): void =>
+  print("test_basic256sha256_sign_and_encrypt: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14880, 1)
+
+  var trust: OpcUaTrustList = OpcUaTrustList.loadFromDir("tests/pki")
+  assert(trust.trustedCount() >= 1, $"expected >=1 trusted cert, got {trust.trustedCount()}")
+
+  var config: OpcUaClientConfig = OpcUaClientConfig.defaults()
+    .setApplicationUri("urn:sindarin:opcua-test-client")
+    .setSecurityPolicy(OpcUaSecurityPolicy.basic256Sha256())
+    .setMessageSecurityMode(OpcUaMessageSecurityMode.signAndEncrypt())
+    .setClientCertificate("tests/pki/client/cert.pem", "tests/pki/client/key.pem")
+    .setTrustList(trust)
+    .setUserIdentity(OpcUaUserIdentity.anonymous())
+
+  var client: OpcUaClient = OpcUaClient.connectWith(server.url(), config)
+  assert(client.isConnected(), "encrypted client should be connected")
+
+  var v: OpcUaVariant = client.readValue(OpcUaNodeId.stringId(2, "Demo.Int32"))
+  assert(v.asInt() == 42, $"encrypted read returned wrong value: {v.asInt()}")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_basic256sha256_sign_and_encrypt()

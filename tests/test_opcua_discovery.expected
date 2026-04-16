@@ -1,0 +1,2 @@
+test_get_endpoints_unsecured: PASS
+test_get_endpoints_secured: PASS

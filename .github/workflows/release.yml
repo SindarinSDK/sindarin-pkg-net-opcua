@@ -1,0 +1,22 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: SindarinSDK/sindarin-pipelines/.github/workflows/sindarin-lib-release.yml@main
+    secrets: inherit
+    with:
+      package-name: sindarin-pkg-net-opcua

@@ -1,0 +1,37 @@
+# ==============================================================================
+# test_opcua_subscription.sn - Monitored-item data-change events
+# ==============================================================================
+
+import "../src/opcua"
+import "./test_server"
+import "sindarin-pkg-sdk/src/time/time"
+
+fn test_monitor_counter(): void =>
+  print("test_monitor_counter: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14870, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  var sub: OpcUaSubscription = client.createSubscription(250.0)
+  var item: OpcUaMonitoredItem = sub.monitor(OpcUaNodeId.stringId(2, "Demo.Counter"))
+  assert(item.id() > 0, "monitored item should have an id")
+
+  # Drain initial value event
+  var initial: OpcUaDataChangeEvent = sub.nextEvent(2000)
+  assert(!initial.isEmpty(), "expected initial notification")
+  assert(initial.value().asInt() == 0, $"initial counter should be 0, got {initial.value().asInt()}")
+
+  # Drive three updates
+  var expected: int[] = {1, 2, 3}
+  for v in expected =>
+    server.setCounter(v)
+    var ev: OpcUaDataChangeEvent = sub.nextEvent(2000)
+    assert(!ev.isEmpty(), $"expected event for counter={v}")
+    assert(ev.value().asInt() == v, $"expected counter={v}, got {ev.value().asInt()}")
+
+  sub.delete()
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_monitor_counter()

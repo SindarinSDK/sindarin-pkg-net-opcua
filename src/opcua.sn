@@ -1,0 +1,966 @@
+# ==============================================================================
+# opcua.sn - OPC UA Client for Sindarin
+# ==============================================================================
+# Provides an OPC UA client built on open62541 with all six security policies,
+# three message security modes, and three user identity types.
+#
+# Usage:
+#   import "sindarin-pkg-net-opcua/src/opcua"
+#
+#   # Anonymous, unsecured (dev / discovery only)
+#   var client: OpcUaClient = OpcUaClient.connect("opc.tcp://localhost:4840")
+#   var v: OpcUaVariant = client.readValue(OpcUaNodeId.numeric(0, 2258))
+#   print($"Current time: {v.asLong()}")
+#   client.disconnect()
+#
+#   # Signed + encrypted, username/password
+#   var config: OpcUaClientConfig = OpcUaClientConfig.defaults()
+#     .setSecurityPolicy(OpcUaSecurityPolicy.basic256Sha256())
+#     .setMessageSecurityMode(OpcUaMessageSecurityMode.signAndEncrypt())
+#     .setUserIdentity(OpcUaUserIdentity.usernamePassword("alice", "secret"))
+#     .setClientCertificate("pki/client_cert.pem", "pki/client_key.pem")
+#     .setTrustList(OpcUaTrustList.loadFromDir("pki/trusted"))
+#   var secure: OpcUaClient = OpcUaClient.connectWith(url, config)
+# ==============================================================================
+
+@source "native/opcua.sn.c"
+@link open62541
+@link ssl
+@link crypto
+
+# ==============================================================================
+# OpcUaSecurityPolicy - Transport security policy
+# ==============================================================================
+# Internal _code values:
+#   0 = None
+#   1 = Basic128Rsa15 (deprecated but widely deployed)
+#   2 = Basic256 (deprecated)
+#   3 = Basic256Sha256 (baseline)
+#   4 = Aes128_Sha256_RsaOaep
+#   5 = Aes256_Sha256_RsaPss
+
+@alias "RtOpcUaSecurityPolicy"
+native struct OpcUaSecurityPolicy as ref =>
+  @alias "code"
+  _code: int
+
+  # Unsecured channel. Only for discovery or explicit dev/test use.
+  static fn none(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(0)
+
+  # OPC UA Basic128Rsa15. Deprecated but required for interop with legacy servers.
+  static fn basic128Rsa15(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(1)
+
+  # OPC UA Basic256. Deprecated.
+  static fn basic256(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(2)
+
+  # OPC UA Basic256Sha256. Current baseline for new deployments.
+  static fn basic256Sha256(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(3)
+
+  # OPC UA Aes128_Sha256_RsaOaep.
+  static fn aes128Sha256RsaOaep(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(4)
+
+  # OPC UA Aes256_Sha256_RsaPss. Strongest modern policy.
+  static fn aes256Sha256RsaPss(): OpcUaSecurityPolicy =>
+    return sn_opcua_security_policy_new(5)
+
+  # Integer code for this policy (0..5).
+  @alias "sn_opcua_security_policy_code"
+  native fn code(): int
+
+  # Canonical OPC UA URI, e.g. "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256".
+  fn uri(): str =>
+    return sn_opcua_security_policy_uri(self)
+
+  @alias "sn_opcua_security_policy_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaMessageSecurityMode - Message integrity / confidentiality mode
+# ==============================================================================
+# Internal _code values: 1=None, 2=Sign, 3=SignAndEncrypt (matches OPC UA spec).
+
+@alias "RtOpcUaMessageSecurityMode"
+native struct OpcUaMessageSecurityMode as ref =>
+  @alias "code"
+  _code: int
+
+  static fn none(): OpcUaMessageSecurityMode =>
+    return sn_opcua_message_mode_new(1)
+
+  static fn sign(): OpcUaMessageSecurityMode =>
+    return sn_opcua_message_mode_new(2)
+
+  static fn signAndEncrypt(): OpcUaMessageSecurityMode =>
+    return sn_opcua_message_mode_new(3)
+
+  @alias "sn_opcua_message_mode_code"
+  native fn code(): int
+
+  @alias "sn_opcua_message_mode_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaUserIdentity - User identity token
+# ==============================================================================
+# Tagged union. kind values:
+#   0 = Anonymous
+#   1 = UsernamePassword
+#   2 = Certificate (x.509)
+#   3 = IssuedToken (e.g. OAuth2)
+
+@alias "RtOpcUaUserIdentity"
+native struct OpcUaUserIdentity as ref =>
+  @alias "kind"
+  _kind: int
+
+  @alias "username"
+  _username: str
+
+  @alias "password"
+  _password: str
+
+  @alias "cert_path"
+  _cert_path: str
+
+  @alias "key_path"
+  _key_path: str
+
+  @alias "issued_token"
+  _issued_token: byte[]
+
+  @alias "token_type"
+  _token_type: str
+
+  static fn anonymous(): OpcUaUserIdentity =>
+    return sn_opcua_user_identity_anonymous()
+
+  static fn usernamePassword(username: str, password: str): OpcUaUserIdentity =>
+    return sn_opcua_user_identity_userpass(username, password)
+
+  static fn certificate(certPath: str, keyPath: str): OpcUaUserIdentity =>
+    return sn_opcua_user_identity_certificate(certPath, keyPath)
+
+  # tokenType example: "http://opcfoundation.org/UA/UserTokenPolicy#JWT"
+  static fn issuedToken(token: byte[], tokenType: str): OpcUaUserIdentity =>
+    return sn_opcua_user_identity_issued(token, tokenType)
+
+  @alias "sn_opcua_user_identity_kind"
+  native fn kind(): int
+
+  @alias "sn_opcua_user_identity_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaCertificate - X.509 certificate wrapper
+# ==============================================================================
+
+@alias "RtOpcUaCertificate"
+native struct OpcUaCertificate as ref =>
+  @alias "der_ptr"
+  _der_ptr: long
+
+  @alias "der_len"
+  _der_len: int
+
+  # Load from PEM file.
+  static fn loadPem(path: str): OpcUaCertificate =>
+    return sn_opcua_certificate_load_pem(path)
+
+  # Load from DER file.
+  static fn loadDer(path: str): OpcUaCertificate =>
+    return sn_opcua_certificate_load_der(path)
+
+  # Construct from raw DER bytes.
+  static fn fromDer(bytes: byte[]): OpcUaCertificate =>
+    return sn_opcua_certificate_from_der(bytes)
+
+  # SHA1 thumbprint as a lowercase hex string.
+  fn thumbprint(): str =>
+    return sn_opcua_certificate_thumbprint(self)
+
+  # Subject distinguished name (RFC 2253).
+  fn subject(): str =>
+    return sn_opcua_certificate_subject(self)
+
+  # Issuer distinguished name.
+  fn issuer(): str =>
+    return sn_opcua_certificate_issuer(self)
+
+  # Validity start as Unix epoch milliseconds.
+  @alias "sn_opcua_certificate_not_before_ms"
+  native fn notBeforeUnixMs(): long
+
+  # Validity end as Unix epoch milliseconds.
+  @alias "sn_opcua_certificate_not_after_ms"
+  native fn notAfterUnixMs(): long
+
+  # Raw DER-encoded bytes.
+  fn derBytes(): byte[] =>
+    return sn_opcua_certificate_der_bytes(self)
+
+  @alias "sn_opcua_certificate_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaTrustList - PKI trust store
+# ==============================================================================
+# Contains three parallel lists:
+#   - trusted: certificates the client explicitly trusts
+#   - issuers: intermediate CAs used to validate chains
+#   - revocations: CRLs (DER-encoded) used to reject revoked certs
+#
+# Directory layout expected by loadFromDir(path)/saveToDir(path):
+#   <path>/trusted/certs/*.der    (or *.pem)
+#   <path>/issuers/certs/*.der
+#   <path>/trusted/crl/*.crl
+#   <path>/issuers/crl/*.crl
+
+@alias "RtOpcUaTrustList"
+native struct OpcUaTrustList as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  static fn new(): OpcUaTrustList =>
+    return sn_opcua_trust_list_new()
+
+  # Load trusted/issuer certs + CRLs from a standard PKI directory.
+  static fn loadFromDir(path: str): OpcUaTrustList =>
+    return sn_opcua_trust_list_load_from_dir(path)
+
+  # TEST / DEV ONLY — bypass server certificate validation.
+  # Never use in production. Emits a warning at connect time.
+  static fn noVerification(): OpcUaTrustList =>
+    return sn_opcua_trust_list_no_verification()
+
+  fn addTrusted(cert: OpcUaCertificate): OpcUaTrustList =>
+    return sn_opcua_trust_list_add_trusted(self, cert)
+
+  fn addIssuer(cert: OpcUaCertificate): OpcUaTrustList =>
+    return sn_opcua_trust_list_add_issuer(self, cert)
+
+  # DER-encoded CRL bytes.
+  fn addRevocation(crlDer: byte[]): OpcUaTrustList =>
+    return sn_opcua_trust_list_add_revocation(self, crlDer)
+
+  @alias "sn_opcua_trust_list_trusted_count"
+  native fn trustedCount(): int
+
+  @alias "sn_opcua_trust_list_issuer_count"
+  native fn issuerCount(): int
+
+  @alias "sn_opcua_trust_list_revocation_count"
+  native fn revocationCount(): int
+
+  # Persist current contents to the standard PKI directory layout.
+  @alias "sn_opcua_trust_list_save_to_dir"
+  native fn saveToDir(path: str): void
+
+  @alias "sn_opcua_trust_list_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaNodeId - OPC UA node identifier
+# ==============================================================================
+# identifierType values:
+#   0 = Numeric
+#   1 = String
+#   2 = Guid
+#   3 = ByteString
+
+@alias "RtOpcUaNodeId"
+native struct OpcUaNodeId as ref =>
+  @alias "namespace_index"
+  _namespace_index: int
+
+  @alias "identifier_type"
+  _identifier_type: int
+
+  @alias "numeric_id"
+  _numeric_id: long
+
+  @alias "string_id"
+  _string_id: str
+
+  @alias "bytes_id"
+  _bytes_id: byte[]
+
+  static fn numeric(namespace: int, id: long): OpcUaNodeId =>
+    return sn_opcua_node_id_numeric(namespace, id)
+
+  static fn stringId(namespace: int, id: str): OpcUaNodeId =>
+    return sn_opcua_node_id_string(namespace, id)
+
+  # guid is a 36-char canonical UUID string (8-4-4-4-12 hex).
+  static fn guid(namespace: int, guidStr: str): OpcUaNodeId =>
+    return sn_opcua_node_id_guid(namespace, guidStr)
+
+  static fn byteString(namespace: int, id: byte[]): OpcUaNodeId =>
+    return sn_opcua_node_id_bytestring(namespace, id)
+
+  # Parse canonical textual form, e.g. "ns=2;i=1234", "ns=0;s=Objects".
+  static fn parse(text: str): OpcUaNodeId =>
+    return sn_opcua_node_id_parse(text)
+
+  @alias "sn_opcua_node_id_namespace"
+  native fn namespaceIndex(): int
+
+  @alias "sn_opcua_node_id_identifier_type"
+  native fn identifierType(): int
+
+  # Canonical textual form (safe for logging).
+  fn toString(): str =>
+    return sn_opcua_node_id_to_string(self)
+
+  @alias "sn_opcua_node_id_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaVariant - Polymorphic value
+# ==============================================================================
+# typeCode() mirrors the OPC UA built-in type id. Commonly seen:
+#   0 = Null          7  = UInt32       12 = String
+#   1 = Boolean       8  = Int64        13 = DateTime
+#   2 = SByte         9  = UInt64       14 = Guid
+#   3 = Byte          10 = Float        15 = ByteString
+#   4 = Int16         11 = Double       17 = NodeId
+#   5 = UInt16
+#   6 = Int32
+# Use isArray() to distinguish scalar from array. Use asX() accessors
+# appropriate to the underlying type; mismatched accessors raise runtime errors.
+
+@alias "RtOpcUaVariant"
+native struct OpcUaVariant as ref =>
+  @alias "type_code"
+  _type_code: int
+
+  @alias "is_array"
+  _is_array: bool
+
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  static fn nullVariant(): OpcUaVariant =>
+    return sn_opcua_variant_null()
+
+  static fn fromBool(v: bool): OpcUaVariant =>
+    return sn_opcua_variant_from_bool(v)
+
+  static fn fromInt(v: int): OpcUaVariant =>
+    return sn_opcua_variant_from_int(v)
+
+  static fn fromLong(v: long): OpcUaVariant =>
+    return sn_opcua_variant_from_long(v)
+
+  static fn fromDouble(v: double): OpcUaVariant =>
+    return sn_opcua_variant_from_double(v)
+
+  static fn fromStr(v: str): OpcUaVariant =>
+    return sn_opcua_variant_from_str(v)
+
+  static fn fromBytes(v: byte[]): OpcUaVariant =>
+    return sn_opcua_variant_from_bytes(v)
+
+  static fn fromNodeId(v: OpcUaNodeId): OpcUaVariant =>
+    return sn_opcua_variant_from_node_id(v)
+
+  @alias "sn_opcua_variant_type_code"
+  native fn typeCode(): int
+
+  @alias "sn_opcua_variant_is_array"
+  native fn isArray(): bool
+
+  @alias "sn_opcua_variant_is_null"
+  native fn isNull(): bool
+
+  @alias "sn_opcua_variant_as_bool"
+  native fn asBool(): bool
+
+  @alias "sn_opcua_variant_as_int"
+  native fn asInt(): int
+
+  @alias "sn_opcua_variant_as_long"
+  native fn asLong(): long
+
+  @alias "sn_opcua_variant_as_double"
+  native fn asDouble(): double
+
+  fn asStr(): str =>
+    return sn_opcua_variant_as_str(self)
+
+  fn asBytes(): byte[] =>
+    return sn_opcua_variant_as_bytes(self)
+
+  fn asNodeId(): OpcUaNodeId =>
+    return sn_opcua_variant_as_node_id(self)
+
+  # Array accessors - only valid when isArray() returns true.
+  fn asBoolArray(): bool[] =>
+    return sn_opcua_variant_as_bool_array(self)
+
+  fn asIntArray(): int[] =>
+    return sn_opcua_variant_as_int_array(self)
+
+  fn asLongArray(): long[] =>
+    return sn_opcua_variant_as_long_array(self)
+
+  fn asDoubleArray(): double[] =>
+    return sn_opcua_variant_as_double_array(self)
+
+  fn asStrArray(): str[] =>
+    return sn_opcua_variant_as_str_array(self)
+
+  # Human-readable representation for logging.
+  fn toString(): str =>
+    return sn_opcua_variant_to_string(self)
+
+  @alias "sn_opcua_variant_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaReferenceDescription - Result of a browse
+# ==============================================================================
+
+@alias "RtOpcUaReferenceDescription"
+native struct OpcUaReferenceDescription as ref =>
+  @alias "node_id"
+  _node_id: OpcUaNodeId
+
+  @alias "reference_type_id"
+  _reference_type_id: OpcUaNodeId
+
+  @alias "type_definition"
+  _type_definition: OpcUaNodeId
+
+  @alias "browse_name"
+  _browse_name: str
+
+  @alias "display_name"
+  _display_name: str
+
+  @alias "node_class"
+  _node_class: int
+
+  @alias "is_forward"
+  _is_forward: bool
+
+  @alias "sn_opcua_reference_description_node_id"
+  native fn nodeId(): OpcUaNodeId
+
+  @alias "sn_opcua_reference_description_browse_name"
+  native fn browseName(): str
+
+  @alias "sn_opcua_reference_description_display_name"
+  native fn displayName(): str
+
+  # NodeClass: 1=Object, 2=Variable, 4=Method, 8=ObjectType,
+  # 16=VariableType, 32=ReferenceType, 64=DataType, 128=View
+  @alias "sn_opcua_reference_description_node_class"
+  native fn nodeClass(): int
+
+  @alias "sn_opcua_reference_description_is_forward"
+  native fn isForward(): bool
+
+  @alias "sn_opcua_reference_description_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaEndpointDescription - Result of a discovery getEndpoints()
+# ==============================================================================
+
+@alias "RtOpcUaEndpointDescription"
+native struct OpcUaEndpointDescription as ref =>
+  @alias "endpoint_url"
+  _endpoint_url: str
+
+  @alias "security_policy_uri"
+  _security_policy_uri: str
+
+  @alias "security_mode"
+  _security_mode: int
+
+  @alias "server_certificate"
+  _server_certificate: byte[]
+
+  @alias "security_level"
+  _security_level: int
+
+  @alias "transport_profile_uri"
+  _transport_profile_uri: str
+
+  @alias "sn_opcua_endpoint_description_endpoint_url"
+  native fn endpointUrl(): str
+
+  @alias "sn_opcua_endpoint_description_security_policy_uri"
+  native fn securityPolicyUri(): str
+
+  @alias "sn_opcua_endpoint_description_security_mode"
+  native fn securityMode(): int
+
+  fn serverCertificate(): byte[] =>
+    return sn_opcua_endpoint_description_server_certificate(self)
+
+  @alias "sn_opcua_endpoint_description_security_level"
+  native fn securityLevel(): int
+
+  @alias "sn_opcua_endpoint_description_transport_profile_uri"
+  native fn transportProfileUri(): str
+
+  # List of supported user identity token policy IDs.
+  fn userTokenPolicyIds(): str[] =>
+    return sn_opcua_endpoint_description_user_token_policies(self)
+
+  @alias "sn_opcua_endpoint_description_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaApplicationDescription - Result of findServers()
+# ==============================================================================
+
+@alias "RtOpcUaApplicationDescription"
+native struct OpcUaApplicationDescription as ref =>
+  @alias "application_uri"
+  _application_uri: str
+
+  @alias "product_uri"
+  _product_uri: str
+
+  @alias "application_name"
+  _application_name: str
+
+  @alias "application_type"
+  _application_type: int
+
+  @alias "gateway_server_uri"
+  _gateway_server_uri: str
+
+  @alias "discovery_profile_uri"
+  _discovery_profile_uri: str
+
+  @alias "sn_opcua_application_description_application_uri"
+  native fn applicationUri(): str
+
+  @alias "sn_opcua_application_description_product_uri"
+  native fn productUri(): str
+
+  @alias "sn_opcua_application_description_application_name"
+  native fn applicationName(): str
+
+  # ApplicationType: 0=Server, 1=Client, 2=ClientAndServer, 3=DiscoveryServer
+  @alias "sn_opcua_application_description_application_type"
+  native fn applicationType(): int
+
+  fn discoveryUrls(): str[] =>
+    return sn_opcua_application_description_discovery_urls(self)
+
+  @alias "sn_opcua_application_description_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaDataChangeEvent - Subscription notification
+# ==============================================================================
+
+@alias "RtOpcUaDataChangeEvent"
+native struct OpcUaDataChangeEvent as ref =>
+  @alias "monitored_item_id"
+  _monitored_item_id: int
+
+  @alias "subscription_id"
+  _subscription_id: int
+
+  @alias "value"
+  _value: OpcUaVariant
+
+  @alias "source_timestamp_ms"
+  _source_timestamp_ms: long
+
+  @alias "server_timestamp_ms"
+  _server_timestamp_ms: long
+
+  @alias "status_code"
+  _status_code: long
+
+  @alias "is_empty"
+  _is_empty: bool
+
+  @alias "sn_opcua_data_change_event_monitored_item_id"
+  native fn monitoredItemId(): int
+
+  @alias "sn_opcua_data_change_event_subscription_id"
+  native fn subscriptionId(): int
+
+  fn value(): OpcUaVariant =>
+    return sn_opcua_data_change_event_value(self)
+
+  @alias "sn_opcua_data_change_event_source_timestamp_ms"
+  native fn sourceTimestampMs(): long
+
+  @alias "sn_opcua_data_change_event_server_timestamp_ms"
+  native fn serverTimestampMs(): long
+
+  # OPC UA status code. 0 = Good; non-zero indicates error or uncertainty.
+  @alias "sn_opcua_data_change_event_status_code"
+  native fn statusCode(): long
+
+  # True if returned from a poll that timed out with no events queued.
+  @alias "sn_opcua_data_change_event_is_empty"
+  native fn isEmpty(): bool
+
+  @alias "sn_opcua_data_change_event_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaMonitoredItem - One subscribed node
+# ==============================================================================
+
+@alias "RtOpcUaMonitoredItem"
+native struct OpcUaMonitoredItem as ref =>
+  @alias "id"
+  _id: int
+
+  @alias "subscription_ptr"
+  _subscription_ptr: long
+
+  @alias "client_ptr"
+  _client_ptr: long
+
+  @alias "sn_opcua_monitored_item_id"
+  native fn id(): int
+
+  @alias "sn_opcua_monitored_item_sampling_interval"
+  native fn samplingIntervalMs(): double
+
+  @alias "sn_opcua_monitored_item_queue_size"
+  native fn queueSize(): int
+
+  # Remove the monitored item from the subscription (server-side).
+  @alias "sn_opcua_monitored_item_remove"
+  native fn remove(): void
+
+  @alias "sn_opcua_monitored_item_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaSubscription - Publish/subscribe channel
+# ==============================================================================
+# Subscriptions are pumped by a background thread inside the client that calls
+# UA_Client_run_iterate(). Incoming notifications are queued per-subscription;
+# user code drains them via nextEvent(timeoutMs).
+
+@alias "RtOpcUaSubscription"
+native struct OpcUaSubscription as ref =>
+  @alias "subscription_id"
+  _subscription_id: int
+
+  @alias "client_ptr"
+  _client_ptr: long
+
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  @alias "sn_opcua_subscription_id"
+  native fn id(): int
+
+  @alias "sn_opcua_subscription_publish_interval"
+  native fn publishIntervalMs(): double
+
+  # Monitor a single node for value changes.
+  # samplingIntervalMs: how often the server samples the node (ms).
+  # queueSize: how many unsent notifications the server may queue.
+  fn monitorDataChange(nodeId: OpcUaNodeId, samplingIntervalMs: double, queueSize: int): OpcUaMonitoredItem =>
+    return sn_opcua_subscription_monitor_data_change(self, nodeId, samplingIntervalMs, queueSize)
+
+  # Convenience: monitor with samplingIntervalMs == publish interval, queueSize == 1.
+  fn monitor(nodeId: OpcUaNodeId): OpcUaMonitoredItem =>
+    return sn_opcua_subscription_monitor_data_change(self, nodeId, -1.0, 1)
+
+  # Block up to timeoutMs for the next data-change event. Returns an empty
+  # event (isEmpty() == true) on timeout.
+  fn nextEvent(timeoutMs: int): OpcUaDataChangeEvent =>
+    return sn_opcua_subscription_next_event(self, timeoutMs)
+
+  # Delete the subscription on the server and stop pumping.
+  @alias "sn_opcua_subscription_delete"
+  native fn delete(): void
+
+  @alias "sn_opcua_subscription_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaClientConfig - Client configuration builder
+# ==============================================================================
+
+@alias "RtOpcUaClientConfig"
+native struct OpcUaClientConfig as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  # Sensible defaults: anonymous, None/None, 5s session timeout, strict
+  # hostname verification.
+  static fn defaults(): OpcUaClientConfig =>
+    return sn_opcua_client_config_defaults()
+
+  # OPC UA application identity.
+  fn setApplicationUri(uri: str): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_application_uri(self, uri)
+
+  fn setApplicationName(name: str): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_application_name(self, name)
+
+  fn setProductUri(uri: str): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_product_uri(self, uri)
+
+  # Security.
+  fn setSecurityPolicy(policy: OpcUaSecurityPolicy): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_security_policy(self, policy)
+
+  fn setMessageSecurityMode(mode: OpcUaMessageSecurityMode): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_message_security_mode(self, mode)
+
+  fn setUserIdentity(identity: OpcUaUserIdentity): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_user_identity(self, identity)
+
+  # PKI. Both cert and private key must be PEM-encoded files.
+  fn setClientCertificate(certPath: str, keyPath: str): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_client_certificate(self, certPath, keyPath)
+
+  fn setTrustList(trustList: OpcUaTrustList): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_trust_list(self, trustList)
+
+  # Strict hostname verification on server certificate SAN (default: true).
+  # Disable only for private-network / IP-only setups.
+  fn setHostnameVerification(enabled: bool): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_hostname_verification(self, enabled)
+
+  # Session parameters.
+  fn setSessionName(name: str): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_session_name(self, name)
+
+  fn setSessionTimeout(ms: double): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_session_timeout(self, ms)
+
+  fn setKeepAliveInterval(ms: double): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_keepalive_interval(self, ms)
+
+  # SecureChannel lifetime before renewal (default 10 minutes).
+  fn setSecureChannelLifetime(ms: double): OpcUaClientConfig =>
+    return sn_opcua_client_config_set_secure_channel_lifetime(self, ms)
+
+  @alias "sn_opcua_client_config_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaClient - Top-level client
+# ==============================================================================
+
+@alias "RtOpcUaClient"
+native struct OpcUaClient as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  @alias "endpoint_url"
+  _endpoint_url: str
+
+  # ==========================================================================
+  # Factory methods
+  # ==========================================================================
+
+  # Connect anonymously, no security. Dev / discovery only.
+  static fn connect(url: str): OpcUaClient =>
+    return sn_opcua_client_connect(url)
+
+  # Connect with a fully-specified configuration.
+  static fn connectWith(url: str, config: OpcUaClientConfig): OpcUaClient =>
+    return sn_opcua_client_connect_with(url, config)
+
+  # Discovery: list endpoints advertised by a server (no session created).
+  static fn getEndpoints(discoveryUrl: str): OpcUaEndpointDescription[] =>
+    return sn_opcua_client_get_endpoints(discoveryUrl)
+
+  # Discovery: list servers known to an LDS / discovery server.
+  static fn findServers(discoveryUrl: str): OpcUaApplicationDescription[] =>
+    return sn_opcua_client_find_servers(discoveryUrl)
+
+  # ==========================================================================
+  # Attribute services
+  # ==========================================================================
+
+  # Read the Value attribute of a Variable node.
+  fn readValue(nodeId: OpcUaNodeId): OpcUaVariant =>
+    return sn_opcua_client_read_value(self, nodeId)
+
+  # Write the Value attribute of a Variable node.
+  fn writeValue(nodeId: OpcUaNodeId, value: OpcUaVariant): void =>
+    sn_opcua_client_write_value(self, nodeId, value)
+
+  # Read an arbitrary attribute by attribute id (13=Value, 2=NodeClass, 3=BrowseName, ...)
+  fn readAttribute(nodeId: OpcUaNodeId, attributeId: int): OpcUaVariant =>
+    return sn_opcua_client_read_attribute(self, nodeId, attributeId)
+
+  # ==========================================================================
+  # Browse services
+  # ==========================================================================
+
+  # Browse forward references from a node (hierarchical + non-hierarchical).
+  fn browse(nodeId: OpcUaNodeId): OpcUaReferenceDescription[] =>
+    return sn_opcua_client_browse(self, nodeId)
+
+  # Browse with a reference-type filter.
+  # referenceTypeId example: "ns=0;i=33" (HierarchicalReferences).
+  fn browseFiltered(nodeId: OpcUaNodeId, referenceTypeId: OpcUaNodeId, includeSubtypes: bool): OpcUaReferenceDescription[] =>
+    return sn_opcua_client_browse_filtered(self, nodeId, referenceTypeId, includeSubtypes)
+
+  # ==========================================================================
+  # Method services
+  # ==========================================================================
+
+  # Call a method on an object node. Returns the output arguments.
+  fn callMethod(objectId: OpcUaNodeId, methodId: OpcUaNodeId, inputs: OpcUaVariant[]): OpcUaVariant[] =>
+    return sn_opcua_client_call_method(self, objectId, methodId, inputs)
+
+  # ==========================================================================
+  # Subscription services
+  # ==========================================================================
+
+  # Create a subscription with the given publish interval.
+  # publishIntervalMs: how often the server delivers batches (ms).
+  fn createSubscription(publishIntervalMs: double): OpcUaSubscription =>
+    return sn_opcua_client_create_subscription(self, publishIntervalMs)
+
+  # ==========================================================================
+  # Introspection
+  # ==========================================================================
+
+  @alias "sn_opcua_client_is_connected"
+  native fn isConnected(): bool
+
+  fn endpointUrl(): str =>
+    return sn_opcua_client_endpoint_url(self)
+
+  # URI of the security policy in use on the active channel.
+  fn activeSecurityPolicyUri(): str =>
+    return sn_opcua_client_active_security_policy_uri(self)
+
+  @alias "sn_opcua_client_active_security_mode"
+  native fn activeSecurityMode(): int
+
+  # ==========================================================================
+  # Lifecycle
+  # ==========================================================================
+
+  # Gracefully close the session and channel.
+  @alias "sn_opcua_client_disconnect"
+  native fn disconnect(): void
+
+  @alias "sn_opcua_client_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# Runtime Function Declarations
+# ==============================================================================
+
+# OpcUaSecurityPolicy
+native fn sn_opcua_security_policy_new(code: int): OpcUaSecurityPolicy
+native fn sn_opcua_security_policy_uri(policy: OpcUaSecurityPolicy): str
+
+# OpcUaMessageSecurityMode
+native fn sn_opcua_message_mode_new(code: int): OpcUaMessageSecurityMode
+
+# OpcUaUserIdentity
+native fn sn_opcua_user_identity_anonymous(): OpcUaUserIdentity
+native fn sn_opcua_user_identity_userpass(username: str, password: str): OpcUaUserIdentity
+native fn sn_opcua_user_identity_certificate(certPath: str, keyPath: str): OpcUaUserIdentity
+native fn sn_opcua_user_identity_issued(token: byte[], tokenType: str): OpcUaUserIdentity
+
+# OpcUaCertificate
+native fn sn_opcua_certificate_load_pem(path: str): OpcUaCertificate
+native fn sn_opcua_certificate_load_der(path: str): OpcUaCertificate
+native fn sn_opcua_certificate_from_der(bytes: byte[]): OpcUaCertificate
+native fn sn_opcua_certificate_thumbprint(cert: OpcUaCertificate): str
+native fn sn_opcua_certificate_subject(cert: OpcUaCertificate): str
+native fn sn_opcua_certificate_issuer(cert: OpcUaCertificate): str
+native fn sn_opcua_certificate_der_bytes(cert: OpcUaCertificate): byte[]
+
+# OpcUaTrustList
+native fn sn_opcua_trust_list_new(): OpcUaTrustList
+native fn sn_opcua_trust_list_load_from_dir(path: str): OpcUaTrustList
+native fn sn_opcua_trust_list_no_verification(): OpcUaTrustList
+native fn sn_opcua_trust_list_add_trusted(tl: OpcUaTrustList, cert: OpcUaCertificate): OpcUaTrustList
+native fn sn_opcua_trust_list_add_issuer(tl: OpcUaTrustList, cert: OpcUaCertificate): OpcUaTrustList
+native fn sn_opcua_trust_list_add_revocation(tl: OpcUaTrustList, crlDer: byte[]): OpcUaTrustList
+
+# OpcUaNodeId
+native fn sn_opcua_node_id_numeric(namespace: int, id: long): OpcUaNodeId
+native fn sn_opcua_node_id_string(namespace: int, id: str): OpcUaNodeId
+native fn sn_opcua_node_id_guid(namespace: int, guidStr: str): OpcUaNodeId
+native fn sn_opcua_node_id_bytestring(namespace: int, id: byte[]): OpcUaNodeId
+native fn sn_opcua_node_id_parse(text: str): OpcUaNodeId
+native fn sn_opcua_node_id_to_string(nodeId: OpcUaNodeId): str
+
+# OpcUaVariant
+native fn sn_opcua_variant_null(): OpcUaVariant
+native fn sn_opcua_variant_from_bool(v: bool): OpcUaVariant
+native fn sn_opcua_variant_from_int(v: int): OpcUaVariant
+native fn sn_opcua_variant_from_long(v: long): OpcUaVariant
+native fn sn_opcua_variant_from_double(v: double): OpcUaVariant
+native fn sn_opcua_variant_from_str(v: str): OpcUaVariant
+native fn sn_opcua_variant_from_bytes(v: byte[]): OpcUaVariant
+native fn sn_opcua_variant_from_node_id(v: OpcUaNodeId): OpcUaVariant
+native fn sn_opcua_variant_as_str(v: OpcUaVariant): str
+native fn sn_opcua_variant_as_bytes(v: OpcUaVariant): byte[]
+native fn sn_opcua_variant_as_node_id(v: OpcUaVariant): OpcUaNodeId
+native fn sn_opcua_variant_as_bool_array(v: OpcUaVariant): bool[]
+native fn sn_opcua_variant_as_int_array(v: OpcUaVariant): int[]
+native fn sn_opcua_variant_as_long_array(v: OpcUaVariant): long[]
+native fn sn_opcua_variant_as_double_array(v: OpcUaVariant): double[]
+native fn sn_opcua_variant_as_str_array(v: OpcUaVariant): str[]
+native fn sn_opcua_variant_to_string(v: OpcUaVariant): str
+
+# OpcUaEndpointDescription
+native fn sn_opcua_endpoint_description_server_certificate(ep: OpcUaEndpointDescription): byte[]
+native fn sn_opcua_endpoint_description_user_token_policies(ep: OpcUaEndpointDescription): str[]
+
+# OpcUaApplicationDescription
+native fn sn_opcua_application_description_discovery_urls(app: OpcUaApplicationDescription): str[]
+
+# OpcUaDataChangeEvent
+native fn sn_opcua_data_change_event_value(ev: OpcUaDataChangeEvent): OpcUaVariant
+
+# OpcUaSubscription
+native fn sn_opcua_subscription_monitor_data_change(sub: OpcUaSubscription, nodeId: OpcUaNodeId, samplingIntervalMs: double, queueSize: int): OpcUaMonitoredItem
+native fn sn_opcua_subscription_next_event(sub: OpcUaSubscription, timeoutMs: int): OpcUaDataChangeEvent
+
+# OpcUaClientConfig
+native fn sn_opcua_client_config_defaults(): OpcUaClientConfig
+native fn sn_opcua_client_config_set_application_uri(cfg: OpcUaClientConfig, uri: str): OpcUaClientConfig
+native fn sn_opcua_client_config_set_application_name(cfg: OpcUaClientConfig, name: str): OpcUaClientConfig
+native fn sn_opcua_client_config_set_product_uri(cfg: OpcUaClientConfig, uri: str): OpcUaClientConfig
+native fn sn_opcua_client_config_set_security_policy(cfg: OpcUaClientConfig, policy: OpcUaSecurityPolicy): OpcUaClientConfig
+native fn sn_opcua_client_config_set_message_security_mode(cfg: OpcUaClientConfig, mode: OpcUaMessageSecurityMode): OpcUaClientConfig
+native fn sn_opcua_client_config_set_user_identity(cfg: OpcUaClientConfig, identity: OpcUaUserIdentity): OpcUaClientConfig
+native fn sn_opcua_client_config_set_client_certificate(cfg: OpcUaClientConfig, certPath: str, keyPath: str): OpcUaClientConfig
+native fn sn_opcua_client_config_set_trust_list(cfg: OpcUaClientConfig, trustList: OpcUaTrustList): OpcUaClientConfig
+native fn sn_opcua_client_config_set_hostname_verification(cfg: OpcUaClientConfig, enabled: bool): OpcUaClientConfig
+native fn sn_opcua_client_config_set_session_name(cfg: OpcUaClientConfig, name: str): OpcUaClientConfig
+native fn sn_opcua_client_config_set_session_timeout(cfg: OpcUaClientConfig, ms: double): OpcUaClientConfig
+native fn sn_opcua_client_config_set_keepalive_interval(cfg: OpcUaClientConfig, ms: double): OpcUaClientConfig
+native fn sn_opcua_client_config_set_secure_channel_lifetime(cfg: OpcUaClientConfig, ms: double): OpcUaClientConfig
+
+# OpcUaClient
+native fn sn_opcua_client_connect(url: str): OpcUaClient
+native fn sn_opcua_client_connect_with(url: str, config: OpcUaClientConfig): OpcUaClient
+native fn sn_opcua_client_get_endpoints(discoveryUrl: str): OpcUaEndpointDescription[]
+native fn sn_opcua_client_find_servers(discoveryUrl: str): OpcUaApplicationDescription[]
+native fn sn_opcua_client_read_value(client: OpcUaClient, nodeId: OpcUaNodeId): OpcUaVariant
+native fn sn_opcua_client_write_value(client: OpcUaClient, nodeId: OpcUaNodeId, value: OpcUaVariant): void
+native fn sn_opcua_client_read_attribute(client: OpcUaClient, nodeId: OpcUaNodeId, attributeId: int): OpcUaVariant
+native fn sn_opcua_client_browse(client: OpcUaClient, nodeId: OpcUaNodeId): OpcUaReferenceDescription[]
+native fn sn_opcua_client_browse_filtered(client: OpcUaClient, nodeId: OpcUaNodeId, refType: OpcUaNodeId, includeSubtypes: bool): OpcUaReferenceDescription[]
+native fn sn_opcua_client_call_method(client: OpcUaClient, objectId: OpcUaNodeId, methodId: OpcUaNodeId, inputs: OpcUaVariant[]): OpcUaVariant[]
+native fn sn_opcua_client_create_subscription(client: OpcUaClient, publishIntervalMs: double): OpcUaSubscription
+native fn sn_opcua_client_endpoint_url(client: OpcUaClient): str
+native fn sn_opcua_client_active_security_policy_uri(client: OpcUaClient): str
