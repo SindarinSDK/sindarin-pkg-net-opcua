@@ -1558,7 +1558,14 @@ RtOpcUaVariant *sn_opcua_data_change_event_value(RtOpcUaDataChangeEvent *e) {
     return (RtOpcUaVariant *)__sn__OpcUaVariant_retain(e->value);
 }
 
-void sn_opcua_data_change_event_dispose(RtOpcUaDataChangeEvent *e) { (void)e; }
+void sn_opcua_data_change_event_dispose(RtOpcUaDataChangeEvent *e) {
+    /* Release the event's owned Variant wrapper so its underlying UA_Variant
+     * is freed via sn_opcua_variant_dispose. Previously this was a no-op,
+     * leaking the Variant wrapper + UA_Variant heap memory for every event
+     * — the dominant per-event memory leak in subscription-heavy clients. */
+    if (!e || !e->value) return;
+    __sn__OpcUaVariant_release(&e->value);
+}
 
 void sn_opcua_subscription_delete(RtOpcUaSubscription *sub) {
     if (!sub) return;
