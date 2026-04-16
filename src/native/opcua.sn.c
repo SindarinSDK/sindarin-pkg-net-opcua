@@ -90,6 +90,32 @@
 #endif
 
 /* ============================================================================
+ * Null logger — suppresses open62541's own stdout/stderr noise, which would
+ * otherwise interleave with test output and break .expected comparisons.
+ * Can be bypassed by setting OPCUA_VERBOSE=1 in the environment.
+ * ============================================================================ */
+
+static void opcua_null_log_cb(void *ctx, UA_LogLevel level, UA_LogCategory cat,
+                              const char *msg, va_list args) {
+    (void)ctx; (void)level; (void)cat; (void)msg; (void)args;
+}
+
+static UA_Logger OPCUA_NULL_LOGGER = { opcua_null_log_cb, NULL, NULL };
+
+static bool opcua_verbose(void) {
+    const char *v = getenv("OPCUA_VERBOSE");
+    return v && v[0] && v[0] != '0';
+}
+
+static UA_Logger *opcua_resolve_logger(UA_Logger *current) {
+    return opcua_verbose() ? current : &OPCUA_NULL_LOGGER;
+}
+
+/* Stdout silencing helpers are unused in the library binding — the test
+ * server handles silencing via dup2 around its lifetime. Kept here for the
+ * discovery path where no test server is involved, but currently unused. */
+
+/* ============================================================================
  * Forward-declared Rt aliases (the compiler emits __sn__X via the .sn file).
  * ============================================================================ */
 
@@ -1818,6 +1844,8 @@ static UA_StatusCode opcua_apply_security(UA_Client *ua, OpcUaClientConfigIntern
     UA_ClientConfig *cc = UA_Client_getConfig(ua);
     /* Defaults first — allocates internal logger, state callbacks, etc. */
     UA_ClientConfig_setDefault(cc);
+    cc->logging = opcua_resolve_logger(cc->logging);
+    cc->eventLoop->logger = cc->logging;
 
     /* Application description. */
     UA_String_clear(&cc->clientDescription.applicationUri);
@@ -2049,6 +2077,8 @@ SnArray *sn_opcua_client_get_endpoints(char *discoveryUrl) {
     if (!ua) return arr;
     UA_ClientConfig *cc = UA_Client_getConfig(ua);
     UA_ClientConfig_setDefault(cc);
+    cc->logging = opcua_resolve_logger(cc->logging);
+    cc->eventLoop->logger = cc->logging;
 
     UA_EndpointDescription *endpoints = NULL;
     size_t n = 0;
@@ -2077,7 +2107,10 @@ SnArray *sn_opcua_client_find_servers(char *discoveryUrl) {
 
     UA_Client *ua = UA_Client_new();
     if (!ua) return arr;
-    UA_ClientConfig_setDefault(UA_Client_getConfig(ua));
+    UA_ClientConfig *cc = UA_Client_getConfig(ua);
+    UA_ClientConfig_setDefault(cc);
+    cc->logging = opcua_resolve_logger(cc->logging);
+    cc->eventLoop->logger = cc->logging;
 
     UA_ApplicationDescription *apps = NULL;
     size_t n = 0;

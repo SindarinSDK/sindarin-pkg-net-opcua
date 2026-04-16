@@ -25,6 +25,60 @@
 
 typedef __sn__OpcUaTestServer RtOpcUaTestServer;
 
+/* Silence open62541's own logging unless OPCUA_VERBOSE=1. */
+static void ts_null_log_cb(void *ctx, UA_LogLevel level, UA_LogCategory cat,
+                           const char *msg, va_list args) {
+    (void)ctx; (void)level; (void)cat; (void)msg; (void)args;
+}
+static UA_Logger TS_NULL_LOGGER = { ts_null_log_cb, NULL, NULL };
+static bool ts_verbose(void) {
+    const char *v = getenv("OPCUA_VERBOSE");
+    return v && v[0] && v[0] != '0';
+}
+static UA_Logger *ts_resolve_logger(UA_Logger *current) {
+    return ts_verbose() ? current : &TS_NULL_LOGGER;
+}
+
+/* Redirect stdout to /dev/null for the duration of the test server's life.
+ * open62541 writes its INFO/WARN diagnostics directly to stdout via its
+ * default logger, which pollutes .expected-file comparisons in the test
+ * runner. Tests only care about the PASS marker, which is printed from
+ * Sindarin AFTER server.stop() restores stdout. */
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
+static int ts_stdout_saved_fd = -1;
+static void ts_stdout_silence(void) {
+    if (ts_verbose() || ts_stdout_saved_fd >= 0) return;
+    fflush(stdout);
+    fflush(stderr);
+#ifdef _WIN32
+    ts_stdout_saved_fd = _dup(_fileno(stdout));
+    int null_fd = _open("NUL", _O_WRONLY);
+    if (null_fd >= 0) { _dup2(null_fd, _fileno(stdout)); _close(null_fd); }
+    _dup2(_fileno(stdout), _fileno(stderr));
+#else
+    ts_stdout_saved_fd = dup(STDOUT_FILENO);
+    int null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) { dup2(null_fd, STDOUT_FILENO); dup2(null_fd, STDERR_FILENO); close(null_fd); }
+#endif
+}
+static void ts_stdout_restore(void) {
+    if (ts_verbose() || ts_stdout_saved_fd < 0) return;
+    fflush(stdout);
+    fflush(stderr);
+#ifdef _WIN32
+    _dup2(ts_stdout_saved_fd, _fileno(stdout));
+    _dup2(ts_stdout_saved_fd, _fileno(stderr));
+    _close(ts_stdout_saved_fd);
+#else
+    dup2(ts_stdout_saved_fd, STDOUT_FILENO);
+    dup2(ts_stdout_saved_fd, STDERR_FILENO);
+    close(ts_stdout_saved_fd);
+#endif
+    ts_stdout_saved_fd = -1;
+}
+
 typedef struct {
     UA_Server    *server;
     srv_thread_t  thread;
@@ -218,13 +272,16 @@ static UA_ByteString opcua_load_bytestring(const char *path) {
  * Public entry points
  * ------------------------------------------------------------------ */
 RtOpcUaTestServer *sn_opcua_test_server_start(long long port, long long mode) {
+    ts_stdout_silence();
     UA_Server *server = UA_Server_new();
-    if (!server) return NULL;
+    if (!server) { ts_stdout_restore(); return NULL; }
 
     UA_ServerConfig *sc = UA_Server_getConfig(server);
 
     if (mode == 0) {
         UA_ServerConfig_setMinimal(sc, (UA_UInt16)port, NULL);
+        sc->logging = ts_resolve_logger(sc->logging);
+        if (sc->eventLoop) sc->eventLoop->logger = sc->logging;
     } else {
         /* Secured mode: load server PKI + register all policies. */
         UA_ByteString cert = opcua_load_bytestring("tests/pki/server/cert.der");
@@ -256,6 +313,9 @@ RtOpcUaTestServer *sn_opcua_test_server_start(long long port, long long mode) {
         UA_String_clear(&sc->applicationDescription.applicationUri);
         sc->applicationDescription.applicationUri =
             UA_STRING_ALLOC("urn:sindarin:opcua-test-server");
+
+        sc->logging = ts_resolve_logger(sc->logging);
+        if (sc->eventLoop) sc->eventLoop->logger = sc->logging;
     }
 
     /* Populate test nodes. */
@@ -326,6 +386,7 @@ void sn_opcua_test_server_stop(RtOpcUaTestServer *s) {
         pthread_join(i->thread, NULL);
 #endif
     }
+    ts_stdout_restore();
 }
 
 void sn_opcua_test_server_dispose(RtOpcUaTestServer *s) {

@@ -3,7 +3,7 @@
 # ==============================================================================
 
 import "../src/opcua"
-import "./test_server"
+import "./opcua_test_server"
 
 fn test_basic256sha256_sign_and_encrypt(): void =>
   print("test_basic256sha256_sign_and_encrypt: ")

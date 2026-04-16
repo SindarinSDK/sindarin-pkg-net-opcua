@@ -3,7 +3,7 @@
 # ==============================================================================
 
 import "../src/opcua"
-import "./test_server"
+import "./opcua_test_server"
 
 fn test_call_add_numbers(): void =>
   print("test_call_add_numbers: ")

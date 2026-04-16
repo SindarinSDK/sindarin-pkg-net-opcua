@@ -3,7 +3,7 @@
 # ==============================================================================
 
 import "../src/opcua"
-import "./test_server"
+import "./opcua_test_server"
 
 fn test_browse_objects_folder(): void =>
   print("test_browse_objects_folder: ")

@@ -3,7 +3,7 @@
 # ==============================================================================
 
 import "../src/opcua"
-import "./test_server"
+import "./opcua_test_server"
 import "sindarin-pkg-sdk/src/time/time"
 
 fn test_monitor_counter(): void =>

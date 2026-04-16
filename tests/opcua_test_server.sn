@@ -9,7 +9,7 @@
 # Demo.AddNumbers(a,b)→ double
 # ==============================================================================
 
-@source "test_server.sn.c"
+@source "opcua_test_server.sn.c"
 
 @alias "RtOpcUaTestServer"
 native struct OpcUaTestServer as ref =>
