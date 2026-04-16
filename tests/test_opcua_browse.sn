@@ -45,11 +45,11 @@ fn test_browse_demo_folder(): void =>
     if name == "Counter" => hasCounter = true
     if name == "AddNumbers" => hasAdd = true
 
-  assert(hasInt32,   "Demo.Int32 should be browsable")
-  assert(hasDouble,  "Demo.Double should be browsable")
-  assert(hasString,  "Demo.String should be browsable")
+  assert(hasInt32, "Demo.Int32 should be browsable")
+  assert(hasDouble, "Demo.Double should be browsable")
+  assert(hasString, "Demo.String should be browsable")
   assert(hasCounter, "Demo.Counter should be browsable")
-  assert(hasAdd,     "Demo.AddNumbers should be browsable")
+  assert(hasAdd, "Demo.AddNumbers should be browsable")
 
   client.disconnect()
   server.stop()

@@ -5,22 +5,22 @@
 # three message security modes, and three user identity types.
 #
 # Usage:
-#   import "sindarin-pkg-net-opcua/src/opcua"
+# import "sindarin-pkg-net-opcua/src/opcua"
 #
-#   # Anonymous, unsecured (dev / discovery only)
-#   var client: OpcUaClient = OpcUaClient.connect("opc.tcp://localhost:4840")
-#   var v: OpcUaVariant = client.readValue(OpcUaNodeId.numeric(0, 2258))
-#   print($"Current time: {v.asLong()}")
-#   client.disconnect()
+# # Anonymous, unsecured (dev / discovery only)
+# var client: OpcUaClient = OpcUaClient.connect("opc.tcp://localhost:4840")
+# var v: OpcUaVariant = client.readValue(OpcUaNodeId.numeric(0, 2258))
+# print($"Current time: {v.asLong()}")
+# client.disconnect()
 #
-#   # Signed + encrypted, username/password
-#   var config: OpcUaClientConfig = OpcUaClientConfig.defaults()
-#     .setSecurityPolicy(OpcUaSecurityPolicy.basic256Sha256())
-#     .setMessageSecurityMode(OpcUaMessageSecurityMode.signAndEncrypt())
-#     .setUserIdentity(OpcUaUserIdentity.usernamePassword("alice", "secret"))
-#     .setClientCertificate("pki/client_cert.pem", "pki/client_key.pem")
-#     .setTrustList(OpcUaTrustList.loadFromDir("pki/trusted"))
-#   var secure: OpcUaClient = OpcUaClient.connectWith(url, config)
+# # Signed + encrypted, username/password
+# var config: OpcUaClientConfig = OpcUaClientConfig.defaults()
+# .setSecurityPolicy(OpcUaSecurityPolicy.basic256Sha256())
+# .setMessageSecurityMode(OpcUaMessageSecurityMode.signAndEncrypt())
+# .setUserIdentity(OpcUaUserIdentity.usernamePassword("alice", "secret"))
+# .setClientCertificate("pki/client_cert.pem", "pki/client_key.pem")
+# .setTrustList(OpcUaTrustList.loadFromDir("pki/trusted"))
+# var secure: OpcUaClient = OpcUaClient.connectWith(url, config)
 # ==============================================================================
 
 @source "native/opcua.sn.c"
@@ -32,12 +32,12 @@
 # OpcUaSecurityPolicy - Transport security policy
 # ==============================================================================
 # Internal _code values:
-#   0 = None
-#   1 = Basic128Rsa15 (deprecated but widely deployed)
-#   2 = Basic256 (deprecated)
-#   3 = Basic256Sha256 (baseline)
-#   4 = Aes128_Sha256_RsaOaep
-#   5 = Aes256_Sha256_RsaPss
+# 0 = None
+# 1 = Basic128Rsa15 (deprecated but widely deployed)
+# 2 = Basic256 (deprecated)
+# 3 = Basic256Sha256 (baseline)
+# 4 = Aes128_Sha256_RsaOaep
+# 5 = Aes256_Sha256_RsaPss
 
 @alias "RtOpcUaSecurityPolicy"
 native struct OpcUaSecurityPolicy as ref =>
@@ -108,10 +108,10 @@ native struct OpcUaMessageSecurityMode as ref =>
 # OpcUaUserIdentity - User identity token
 # ==============================================================================
 # Tagged union. kind values:
-#   0 = Anonymous
-#   1 = UsernamePassword
-#   2 = Certificate (x.509)
-#   3 = IssuedToken (e.g. OAuth2)
+# 0 = Anonymous
+# 1 = UsernamePassword
+# 2 = Certificate (x.509)
+# 3 = IssuedToken (e.g. OAuth2)
 
 @alias "RtOpcUaUserIdentity"
 native struct OpcUaUserIdentity as ref =>
@@ -210,15 +210,15 @@ native struct OpcUaCertificate as ref =>
 # OpcUaTrustList - PKI trust store
 # ==============================================================================
 # Contains three parallel lists:
-#   - trusted: certificates the client explicitly trusts
-#   - issuers: intermediate CAs used to validate chains
-#   - revocations: CRLs (DER-encoded) used to reject revoked certs
+# - trusted: certificates the client explicitly trusts
+# - issuers: intermediate CAs used to validate chains
+# - revocations: CRLs (DER-encoded) used to reject revoked certs
 #
 # Directory layout expected by loadFromDir(path)/saveToDir(path):
-#   <path>/trusted/certs/*.der    (or *.pem)
-#   <path>/issuers/certs/*.der
-#   <path>/trusted/crl/*.crl
-#   <path>/issuers/crl/*.crl
+# <path>/trusted/certs/*.der    (or *.pem)
+# <path>/issuers/certs/*.der
+# <path>/trusted/crl/*.crl
+# <path>/issuers/crl/*.crl
 
 @alias "RtOpcUaTrustList"
 native struct OpcUaTrustList as ref =>
@@ -267,10 +267,10 @@ native struct OpcUaTrustList as ref =>
 # OpcUaNodeId - OPC UA node identifier
 # ==============================================================================
 # identifierType values:
-#   0 = Numeric
-#   1 = String
-#   2 = Guid
-#   3 = ByteString
+# 0 = Numeric
+# 1 = String
+# 2 = Guid
+# 3 = ByteString
 
 @alias "RtOpcUaNodeId"
 native struct OpcUaNodeId as ref =>
@@ -323,13 +323,13 @@ native struct OpcUaNodeId as ref =>
 # OpcUaVariant - Polymorphic value
 # ==============================================================================
 # typeCode() mirrors the OPC UA built-in type id. Commonly seen:
-#   0 = Null          7  = UInt32       12 = String
-#   1 = Boolean       8  = Int64        13 = DateTime
-#   2 = SByte         9  = UInt64       14 = Guid
-#   3 = Byte          10 = Float        15 = ByteString
-#   4 = Int16         11 = Double       17 = NodeId
-#   5 = UInt16
-#   6 = Int32
+# 0 = Null          7  = UInt32       12 = String
+# 1 = Boolean       8  = Int64        13 = DateTime
+# 2 = SByte         9  = UInt64       14 = Guid
+# 3 = Byte          10 = Float        15 = ByteString
+# 4 = Int16         11 = Double       17 = NodeId
+# 5 = UInt16
+# 6 = Int32
 # Use isArray() to distinguish scalar from array. Use asX() accessors
 # appropriate to the underlying type; mismatched accessors raise runtime errors.
 
