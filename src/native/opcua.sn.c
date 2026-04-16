@@ -1175,10 +1175,26 @@ char *sn_opcua_variant_to_string(RtOpcUaVariant *v) {
             return strdup(*(UA_Boolean *)u->data ? "true" : "false");
         }
         char buf[96];
+        /* Every OPC UA built-in numeric scalar gets a dedicated format so
+         * downstream logs show real values instead of the fallback token. */
+        if (u->type == &UA_TYPES[UA_TYPES_SBYTE])  { snprintf(buf,sizeof(buf),"%d",   (int)*(UA_SByte  *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_BYTE])   { snprintf(buf,sizeof(buf),"%u",   (unsigned)*(UA_Byte *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_INT16])  { snprintf(buf,sizeof(buf),"%d",   (int)*(UA_Int16  *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_UINT16]) { snprintf(buf,sizeof(buf),"%u",   (unsigned)*(UA_UInt16 *)u->data); return strdup(buf); }
         if (u->type == &UA_TYPES[UA_TYPES_INT32])  { snprintf(buf,sizeof(buf),"%d",   *(UA_Int32  *)u->data); return strdup(buf); }
-        if (u->type == &UA_TYPES[UA_TYPES_INT64])  { snprintf(buf,sizeof(buf),"%lld", (long long)*(UA_Int64 *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_UINT32]) { snprintf(buf,sizeof(buf),"%u",   *(UA_UInt32 *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_INT64])  { snprintf(buf,sizeof(buf),"%lld", (long long)*(UA_Int64  *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_UINT64]) { snprintf(buf,sizeof(buf),"%llu", (unsigned long long)*(UA_UInt64 *)u->data); return strdup(buf); }
+        if (u->type == &UA_TYPES[UA_TYPES_FLOAT])  { snprintf(buf,sizeof(buf),"%.9g", (double)*(UA_Float *)u->data); return strdup(buf); }
         if (u->type == &UA_TYPES[UA_TYPES_DOUBLE]) { snprintf(buf,sizeof(buf),"%.17g",*(UA_Double *)u->data); return strdup(buf); }
         if (u->type == &UA_TYPES[UA_TYPES_STRING]) { return opcua_strdup_ua_string((UA_String *)u->data); }
+        if (u->type == &UA_TYPES[UA_TYPES_DATETIME]) {
+            UA_DateTimeStruct ts = UA_DateTime_toStruct(*(UA_DateTime *)u->data);
+            snprintf(buf, sizeof(buf),
+                     "%04u-%02u-%02uT%02u:%02u:%02u.%03uZ",
+                     ts.year, ts.month, ts.day, ts.hour, ts.min, ts.sec, ts.milliSec);
+            return strdup(buf);
+        }
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "<Variant typeKind=%d arrayLen=%zu>",
