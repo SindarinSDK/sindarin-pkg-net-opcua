@@ -24,6 +24,15 @@ SRC_SOURCES  := $(wildcard src/*.sn) $(wildcard src/native/*.sn.c) $(wildcard sr
 RUN_TESTS_SN := .sn/sindarin-pkg-test/src/execute.sn
 RUN_TESTS    := $(BIN_DIR)/run_tests$(EXE_EXT)
 
+# open62541 on Windows requires several Windows system libraries. MSVC-style
+# #pragma comment(lib, ...) autolink is ignored by clang targeting mingw,
+# so add them explicitly to LDFLAGS.
+ifeq ($(PLATFORM),windows)
+    PLATFORM_LDFLAGS := -liphlpapi -lws2_32 -lcrypt32 -lbcrypt -ladvapi32 -luser32
+else
+    PLATFORM_LDFLAGS :=
+endif
+
 setup:
 	@$(SN) --install
 ifeq ($(OS),Windows_NT)
@@ -36,7 +45,7 @@ endif
 
 test: setup $(RUN_TESTS)
 	@SN_CFLAGS="-I$(CURDIR)/libs/$(PLATFORM)/include $(SN_CFLAGS)" \
-	 SN_LDFLAGS="-L$(CURDIR)/libs/$(PLATFORM)/lib $(SN_LDFLAGS)" \
+	 SN_LDFLAGS="-L$(CURDIR)/libs/$(PLATFORM)/lib $(PLATFORM_LDFLAGS) $(SN_LDFLAGS)" \
 	 $(RUN_TESTS) --parallel 4 --run-timeout 180 --verbose
 
 $(BIN_DIR):
@@ -44,7 +53,7 @@ $(BIN_DIR):
 
 $(RUN_TESTS): $(RUN_TESTS_SN) $(SRC_SOURCES) | $(BIN_DIR)
 	@SN_CFLAGS="-I$(CURDIR)/libs/$(PLATFORM)/include $(SN_CFLAGS)" \
-	 SN_LDFLAGS="-L$(CURDIR)/libs/$(PLATFORM)/lib $(SN_LDFLAGS)" \
+	 SN_LDFLAGS="-L$(CURDIR)/libs/$(PLATFORM)/lib $(PLATFORM_LDFLAGS) $(SN_LDFLAGS)" \
 	 $(SN) $(RUN_TESTS_SN) -o $@ -l 1
 
 VCPKG_ROOT ?= $(CURDIR)/vcpkg
