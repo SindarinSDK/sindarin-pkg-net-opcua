@@ -2069,8 +2069,6 @@ RtOpcUaClient *sn_opcua_client_connect_with(char *url, RtOpcUaClientConfig *conf
 SnArray *sn_opcua_client_get_endpoints(char *discoveryUrl) {
     SnArray *arr = sn_array_new(sizeof(RtOpcUaEndpointDescription *), 4);
     arr->elem_tag     = SN_TAG_STRUCT;
-    arr->elem_release = (void (*)(void *))__sn__OpcUaEndpointDescription_release;
-    arr->elem_copy    = (void *(*)(void *))__sn__OpcUaEndpointDescription_retain;
     if (!discoveryUrl) return arr;
 
     UA_Client *ua = UA_Client_new();
@@ -2101,8 +2099,6 @@ SnArray *sn_opcua_client_get_endpoints(char *discoveryUrl) {
 SnArray *sn_opcua_client_find_servers(char *discoveryUrl) {
     SnArray *arr = sn_array_new(sizeof(RtOpcUaApplicationDescription *), 4);
     arr->elem_tag     = SN_TAG_STRUCT;
-    arr->elem_release = (void (*)(void *))__sn__OpcUaApplicationDescription_release;
-    arr->elem_copy    = (void *(*)(void *))__sn__OpcUaApplicationDescription_retain;
     if (!discoveryUrl) return arr;
 
     UA_Client *ua = UA_Client_new();
@@ -2207,8 +2203,6 @@ RtOpcUaVariant *sn_opcua_client_read_attribute(RtOpcUaClient *client, RtOpcUaNod
 static SnArray *opcua_new_ref_desc_array(void) {
     SnArray *arr = sn_array_new(sizeof(RtOpcUaReferenceDescription *), 4);
     arr->elem_tag     = SN_TAG_STRUCT;
-    arr->elem_release = (void (*)(void *))__sn__OpcUaReferenceDescription_release;
-    arr->elem_copy    = (void *(*)(void *))__sn__OpcUaReferenceDescription_retain;
     return arr;
 }
 
@@ -2289,8 +2283,6 @@ SnArray *sn_opcua_client_call_method(RtOpcUaClient *client,
                                      SnArray *inputs) {
     SnArray *out = sn_array_new(sizeof(RtOpcUaVariant *), 2);
     out->elem_tag     = SN_TAG_STRUCT;
-    out->elem_release = (void (*)(void *))__sn__OpcUaVariant_release;
-    out->elem_copy    = (void *(*)(void *))__sn__OpcUaVariant_retain;
     if (!client || !objectId || !methodId) return out;
 
     size_t n_in = inputs ? (size_t)inputs->len : 0;
