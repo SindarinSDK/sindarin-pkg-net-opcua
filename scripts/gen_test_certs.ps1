@@ -166,18 +166,23 @@ Remove-Item (Join-Path $PkiDir "client\csr.pem") -ErrorAction SilentlyContinue
 # --- Publish CA into trusted/ ---
 Run-OpenSSL x509 -in (Join-Path $PkiDir "ca\cert.pem") -outform DER -out (Join-Path $PkiDir "trusted\certs\ca.der")
 
-# --- Expired cert for negative tests ---
-Run-OpenSSL genrsa -out (Join-Path $PkiDir "expired\key.pem") 2048
-Run-OpenSSL req -new `
+# --- Expired cert for negative tests (best-effort; not all OpenSSL builds
+#     accept -days -1). Skipped silently if unsupported. ---
+& $openssl genrsa -out (Join-Path $PkiDir "expired\key.pem") 2048 2>&1 | Out-Null
+& $openssl req -new `
     -key    (Join-Path $PkiDir "expired\key.pem") `
     -subj "/CN=Sindarin OPC UA Expired Test/O=Sindarin/C=GB" `
-    -out    (Join-Path $PkiDir "expired\csr.pem")
-Run-OpenSSL x509 -req `
+    -out    (Join-Path $PkiDir "expired\csr.pem") 2>&1 | Out-Null
+& $openssl x509 -req `
     -in     (Join-Path $PkiDir "expired\csr.pem") `
     -CA     (Join-Path $PkiDir "ca\cert.pem") -CAkey (Join-Path $PkiDir "ca\key.pem") -CAcreateserial `
     -out    (Join-Path $PkiDir "expired\cert.pem") `
-    -days   -1 -sha256
-Run-OpenSSL x509 -in  (Join-Path $PkiDir "expired\cert.pem") -outform DER -out (Join-Path $PkiDir "expired\cert.der")
+    -days   -1 -sha256 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $PkiDir "expired\cert.pem"))) {
+    & $openssl x509 -in  (Join-Path $PkiDir "expired\cert.pem") -outform DER -out (Join-Path $PkiDir "expired\cert.der") 2>&1 | Out-Null
+} else {
+    Write-Host "Note: expired-cert generation unsupported on this OpenSSL build; skipping." -ForegroundColor Yellow
+}
 Remove-Item (Join-Path $PkiDir "expired\csr.pem") -ErrorAction SilentlyContinue
 
 # --- Untrusted CA + server cert signed by it ---

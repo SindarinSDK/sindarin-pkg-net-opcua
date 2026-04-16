@@ -138,7 +138,8 @@ rm -f "$PKI_DIR/client/csr.pem"
 openssl x509 -in "$PKI_DIR/ca/cert.pem" -outform DER -out "$PKI_DIR/trusted/certs/ca.der"
 
 # ------------------------------------------------------------------
-# Generate an expired cert for negative tests
+# Generate an expired cert for negative tests (best-effort).
+# Not all OpenSSL builds accept -days -1; skip if unsupported.
 # ------------------------------------------------------------------
 mkdir -p "$PKI_DIR/expired"
 openssl genrsa -out "$PKI_DIR/expired/key.pem" 2048 2>/dev/null
@@ -146,13 +147,15 @@ openssl req -new \
     -key "$PKI_DIR/expired/key.pem" \
     -subj "/CN=Sindarin OPC UA Expired Test/O=Sindarin/C=GB" \
     -out "$PKI_DIR/expired/csr.pem" 2>/dev/null
-# -days -1 produces an already-expired cert
-openssl x509 -req \
+if openssl x509 -req \
     -in "$PKI_DIR/expired/csr.pem" \
     -CA "$PKI_DIR/ca/cert.pem" -CAkey "$PKI_DIR/ca/key.pem" -CAcreateserial \
     -out "$PKI_DIR/expired/cert.pem" \
-    -days -1 -sha256 2>/dev/null
-openssl x509 -in "$PKI_DIR/expired/cert.pem" -outform DER -out "$PKI_DIR/expired/cert.der"
+    -days -1 -sha256 2>/dev/null; then
+    openssl x509 -in "$PKI_DIR/expired/cert.pem" -outform DER -out "$PKI_DIR/expired/cert.der"
+else
+    echo "Note: expired-cert generation unsupported on this OpenSSL build; skipping."
+fi
 rm -f "$PKI_DIR/expired/csr.pem"
 
 # ------------------------------------------------------------------
