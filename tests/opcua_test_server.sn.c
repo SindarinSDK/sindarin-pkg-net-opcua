@@ -44,38 +44,44 @@ static UA_Logger *ts_resolve_logger(UA_Logger *current) {
  * default logger, which pollutes .expected-file comparisons in the test
  * runner. Tests only care about the PASS marker, which is printed from
  * Sindarin AFTER server.stop() restores stdout. */
-#ifndef _WIN32
 #include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#define TS_STDOUT_FD   _fileno(stdout)
+#define TS_STDERR_FD   _fileno(stderr)
+#define TS_DUP(fd)     _dup(fd)
+#define TS_DUP2(o,n)   _dup2((o),(n))
+#define TS_CLOSE(fd)   _close(fd)
+#define TS_OPEN_NULL() _open("NUL", _O_WRONLY)
+#else
+#define TS_STDOUT_FD   STDOUT_FILENO
+#define TS_STDERR_FD   STDERR_FILENO
+#define TS_DUP(fd)     dup(fd)
+#define TS_DUP2(o,n)   dup2((o),(n))
+#define TS_CLOSE(fd)   close(fd)
+#define TS_OPEN_NULL() open("/dev/null", O_WRONLY)
 #endif
+
 static int ts_stdout_saved_fd = -1;
 static void ts_stdout_silence(void) {
     if (ts_verbose() || ts_stdout_saved_fd >= 0) return;
     fflush(stdout);
     fflush(stderr);
-#ifdef _WIN32
-    ts_stdout_saved_fd = _dup(_fileno(stdout));
-    int null_fd = _open("NUL", _O_WRONLY);
-    if (null_fd >= 0) { _dup2(null_fd, _fileno(stdout)); _close(null_fd); }
-    _dup2(_fileno(stdout), _fileno(stderr));
-#else
-    ts_stdout_saved_fd = dup(STDOUT_FILENO);
-    int null_fd = open("/dev/null", O_WRONLY);
-    if (null_fd >= 0) { dup2(null_fd, STDOUT_FILENO); dup2(null_fd, STDERR_FILENO); close(null_fd); }
-#endif
+    ts_stdout_saved_fd = TS_DUP(TS_STDOUT_FD);
+    int null_fd = TS_OPEN_NULL();
+    if (null_fd >= 0) {
+        TS_DUP2(null_fd, TS_STDOUT_FD);
+        TS_DUP2(null_fd, TS_STDERR_FD);
+        TS_CLOSE(null_fd);
+    }
 }
 static void ts_stdout_restore(void) {
     if (ts_verbose() || ts_stdout_saved_fd < 0) return;
     fflush(stdout);
     fflush(stderr);
-#ifdef _WIN32
-    _dup2(ts_stdout_saved_fd, _fileno(stdout));
-    _dup2(ts_stdout_saved_fd, _fileno(stderr));
-    _close(ts_stdout_saved_fd);
-#else
-    dup2(ts_stdout_saved_fd, STDOUT_FILENO);
-    dup2(ts_stdout_saved_fd, STDERR_FILENO);
-    close(ts_stdout_saved_fd);
-#endif
+    TS_DUP2(ts_stdout_saved_fd, TS_STDOUT_FD);
+    TS_DUP2(ts_stdout_saved_fd, TS_STDERR_FD);
+    TS_CLOSE(ts_stdout_saved_fd);
     ts_stdout_saved_fd = -1;
 }
 
