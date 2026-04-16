@@ -925,10 +925,42 @@ static UA_Variant *opcua_variant_ptr(RtOpcUaVariant *v) {
     return (UA_Variant *)(uintptr_t)v->internal_ptr;
 }
 
+/* Translate open62541's internal UA_DataTypeKind enum (0-based, Boolean=0)
+ * into the OPC UA spec BuiltInType id (1-based, Boolean=1, Part 6 §5.1.2).
+ * The Sindarin-facing contract in opcua.sn:325 promises spec numbering, so
+ * this mapping is the canonical boundary between the two. Kinds that have
+ * no direct BuiltInType (Decimal, Enum, Structure, Union, ...) fall through
+ * to 0 (unknown). */
 static int opcua_variant_type_code_for(const UA_Variant *v) {
     if (!v || !v->type) return 0;
-    /* UA_DataType.typeKind is stable across open62541 releases. */
-    return (int)v->type->typeKind;
+    switch (v->type->typeKind) {
+    case UA_DATATYPEKIND_BOOLEAN:         return 1;
+    case UA_DATATYPEKIND_SBYTE:           return 2;
+    case UA_DATATYPEKIND_BYTE:            return 3;
+    case UA_DATATYPEKIND_INT16:           return 4;
+    case UA_DATATYPEKIND_UINT16:          return 5;
+    case UA_DATATYPEKIND_INT32:           return 6;
+    case UA_DATATYPEKIND_UINT32:          return 7;
+    case UA_DATATYPEKIND_INT64:           return 8;
+    case UA_DATATYPEKIND_UINT64:          return 9;
+    case UA_DATATYPEKIND_FLOAT:           return 10;
+    case UA_DATATYPEKIND_DOUBLE:          return 11;
+    case UA_DATATYPEKIND_STRING:          return 12;
+    case UA_DATATYPEKIND_DATETIME:        return 13;
+    case UA_DATATYPEKIND_GUID:            return 14;
+    case UA_DATATYPEKIND_BYTESTRING:      return 15;
+    case UA_DATATYPEKIND_XMLELEMENT:      return 16;
+    case UA_DATATYPEKIND_NODEID:          return 17;
+    case UA_DATATYPEKIND_EXPANDEDNODEID:  return 18;
+    case UA_DATATYPEKIND_STATUSCODE:      return 19;
+    case UA_DATATYPEKIND_QUALIFIEDNAME:   return 20;
+    case UA_DATATYPEKIND_LOCALIZEDTEXT:   return 21;
+    case UA_DATATYPEKIND_EXTENSIONOBJECT: return 22;
+    case UA_DATATYPEKIND_DATAVALUE:       return 23;
+    case UA_DATATYPEKIND_VARIANT:         return 24;
+    case UA_DATATYPEKIND_DIAGNOSTICINFO:  return 25;
+    default:                              return 0;
+    }
 }
 
 static RtOpcUaVariant *opcua_wrap_variant_take(UA_Variant *src) {
