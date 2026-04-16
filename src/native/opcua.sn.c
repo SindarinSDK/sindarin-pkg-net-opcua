@@ -45,6 +45,16 @@
     #include <windows.h>
     #include <process.h>
 
+    /* open62541 calls into Winsock, IP Helper, Windows crypto, and the
+     * Windows User32 API for its default logger. Autolink the system libs
+     * so the static open62541 build resolves all references. */
+    #pragma comment(lib, "ws2_32.lib")
+    #pragma comment(lib, "iphlpapi.lib")
+    #pragma comment(lib, "crypt32.lib")
+    #pragma comment(lib, "bcrypt.lib")
+    #pragma comment(lib, "advapi32.lib")
+    #pragma comment(lib, "user32.lib")
+
     typedef CRITICAL_SECTION opcua_mutex_t;
     typedef HANDLE opcua_thread_t;
     typedef CONDITION_VARIABLE opcua_cond_t;
