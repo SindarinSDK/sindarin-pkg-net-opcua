@@ -437,7 +437,14 @@ static char *opcua_x509_name_to_string(X509_NAME *name) {
     X509_NAME_print_ex(bio, name, 0, XN_FLAG_RFC2253);
     char *buf = NULL;
     long sz = BIO_get_mem_data(bio, &buf);
-    char *out = (sz > 0 && buf) ? strndup(buf, (size_t)sz) : strdup("");
+    char *out;
+    if (sz > 0 && buf) {
+        out = (char *)malloc((size_t)sz + 1);
+        if (out) { memcpy(out, buf, (size_t)sz); out[sz] = '\0'; }
+        else out = strdup("");
+    } else {
+        out = strdup("");
+    }
     BIO_free(bio);
     return out;
 }
