@@ -3,6 +3,14 @@
 
 $ErrorActionPreference = "Stop"
 
+# In PowerShell 7.3+ native commands that write to stderr are treated as
+# terminating errors under $ErrorActionPreference = "Stop". OpenSSL writes
+# status messages (e.g. "Certificate request self-signature ok") to stderr
+# even on success, so we opt out of that behavior for this script.
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
 $PkiDir = Join-Path (Get-Location) "tests\pki"
 $Days   = 3650
 
