@@ -777,6 +777,17 @@ native struct OpcUaClient as ref =>
   static fn connectWith(url: str, config: OpcUaClientConfig): OpcUaClient =>
     return sn_opcua_client_connect_with(url, config)
 
+  # Null-safe connect for reconnection paths. Returns a possibly-null client
+  # when the server is unreachable. Caller MUST check with isNull() before
+  # calling any methods on the returned client.
+  static fn tryConnect(url: str): OpcUaClient =>
+    return sn_opcua_client_try_connect(url)
+
+  # Returns true if the client pointer is null (server was unreachable at
+  # connect time). Safe to call with a null pointer — no dereference occurs.
+  static fn isNull(client: OpcUaClient): bool =>
+    return sn_opcua_client_is_null(client) != 0
+
   # Discovery: list endpoints advertised by a server (no session created).
   static fn getEndpoints(discoveryUrl: str): OpcUaEndpointDescription[] =>
     return sn_opcua_client_get_endpoints(discoveryUrl)
@@ -953,6 +964,8 @@ native fn sn_opcua_client_config_set_secure_channel_lifetime(cfg: OpcUaClientCon
 # OpcUaClient
 native fn sn_opcua_client_connect(url: str): OpcUaClient
 native fn sn_opcua_client_connect_with(url: str, config: OpcUaClientConfig): OpcUaClient
+native fn sn_opcua_client_try_connect(url: str): OpcUaClient
+native fn sn_opcua_client_is_null(client: OpcUaClient): int
 native fn sn_opcua_client_get_endpoints(discoveryUrl: str): OpcUaEndpointDescription[]
 native fn sn_opcua_client_find_servers(discoveryUrl: str): OpcUaApplicationDescription[]
 native fn sn_opcua_client_read_value(client: OpcUaClient, nodeId: OpcUaNodeId): OpcUaVariant

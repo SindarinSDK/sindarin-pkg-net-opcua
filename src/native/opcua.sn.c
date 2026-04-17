@@ -2137,6 +2137,26 @@ RtOpcUaClient *sn_opcua_client_connect_with(char *url, RtOpcUaClientConfig *conf
     return opcua_client_new_internal(url, opcua_client_config_internal(config));
 }
 
+/*
+ * Null-safe connect: identical to sn_opcua_client_connect but intended for
+ * reconnection paths where the caller checks the result with
+ * sn_opcua_client_is_null() before dereferencing. Returns NULL if the server
+ * is unreachable — no crash, no abort.
+ */
+RtOpcUaClient *sn_opcua_client_try_connect(char *url) {
+    if (!url) return NULL;
+    return opcua_client_new_internal(url, NULL);
+}
+
+/*
+ * Returns 1 if the client pointer is NULL, 0 if valid. Safe to call with a
+ * NULL pointer — no dereference occurs. Used by reconnection logic to check
+ * whether sn_opcua_client_try_connect succeeded before touching the client.
+ */
+int sn_opcua_client_is_null(void *client) {
+    return client == NULL ? 1 : 0;
+}
+
 /* Discovery: no session created. */
 SnArray *sn_opcua_client_get_endpoints(char *discoveryUrl) {
     SnArray *arr = sn_array_new(sizeof(RtOpcUaEndpointDescription *), 4);
