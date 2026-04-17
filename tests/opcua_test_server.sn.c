@@ -90,8 +90,11 @@ typedef struct {
     srv_thread_t  thread;
     volatile UA_Boolean running;
     int           port;
-    /* Pre-added Demo.Counter node id cached for fast external set. */
+    /* Pre-added node ids cached for fast external set. */
     UA_NodeId     counter_node;
+    UA_NodeId     analog_node;
+    UA_NodeId     alarm_node;
+    UA_NodeId     demo_folder_id;
 } OpcUaTestServerInternal;
 
 static OpcUaTestServerInternal *tsi(RtOpcUaTestServer *s) {
@@ -134,6 +137,7 @@ static void opcua_test_server_add_demo_nodes(UA_Server *server, OpcUaTestServerI
             UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
             oattr, NULL, &folder_id);
     }
+    UA_NodeId_copy(&folder_id, &i->demo_folder_id);
 
     /* Demo.Int32 */
     {
@@ -227,6 +231,119 @@ static void opcua_test_server_add_demo_nodes(UA_Server *server, OpcUaTestServerI
             &opcua_demo_add_numbers,
             2, input_args, 1, &output_arg, NULL, NULL);
     }
+
+    /* Demo.Analog — AnalogItemType (Double, RW) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_Double v = 25.0;
+        UA_Variant_setScalar(&vattr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "Analog");
+        vattr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+        vattr.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+        UA_NodeId out;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Analog"),
+            folder_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+            UA_QUALIFIEDNAME(2, "Analog"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_ANALOGITEMTYPE),
+            vattr, NULL, &out);
+        UA_NodeId_copy(&out, &i->analog_node);
+    }
+    /* Demo.Analog → EURange (HasProperty) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_Range range;
+        range.low  = 0.0;
+        range.high = 100.0;
+        UA_Variant_setScalar(&vattr.value, &range, &UA_TYPES[UA_TYPES_RANGE]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "EURange");
+        vattr.dataType = UA_TYPES[UA_TYPES_RANGE].typeId;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Analog.EURange"),
+            i->analog_node, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+            UA_QUALIFIEDNAME(0, "EURange"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+            vattr, NULL, NULL);
+    }
+    /* Demo.Analog → EngineeringUnits (HasProperty) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_EUInformation eu;
+        memset(&eu, 0, sizeof(eu));
+        eu.namespaceUri = UA_STRING("http://www.opcfoundation.org/UA/units/un/cefact");
+        eu.unitId = 4408652;  /* degree Celsius */
+        eu.displayName = UA_LOCALIZEDTEXT("en-US", "\xc2\xb0""C");
+        eu.description = UA_LOCALIZEDTEXT("en-US", "degree Celsius");
+        UA_Variant_setScalar(&vattr.value, &eu, &UA_TYPES[UA_TYPES_EUINFORMATION]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "EngineeringUnits");
+        vattr.dataType = UA_TYPES[UA_TYPES_EUINFORMATION].typeId;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Analog.EngineeringUnits"),
+            i->analog_node, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+            UA_QUALIFIEDNAME(0, "EngineeringUnits"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+            vattr, NULL, NULL);
+    }
+
+    /* Demo.Alarm — TwoStateDiscreteType (Boolean) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_Boolean v = false;
+        UA_Variant_setScalar(&vattr.value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "Alarm");
+        vattr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+        vattr.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+        UA_NodeId out;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Alarm"),
+            folder_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+            UA_QUALIFIEDNAME(2, "Alarm"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_TWOSTATEDISCRETETYPE),
+            vattr, NULL, &out);
+        UA_NodeId_copy(&out, &i->alarm_node);
+    }
+    /* Demo.Alarm → TrueState (HasProperty) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_LocalizedText ts = UA_LOCALIZEDTEXT("en-US", "Active");
+        UA_Variant_setScalar(&vattr.value, &ts, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "TrueState");
+        vattr.dataType = UA_TYPES[UA_TYPES_LOCALIZEDTEXT].typeId;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Alarm.TrueState"),
+            i->alarm_node, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+            UA_QUALIFIEDNAME(0, "TrueState"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+            vattr, NULL, NULL);
+    }
+    /* Demo.Alarm → FalseState (HasProperty) */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_LocalizedText fs = UA_LOCALIZEDTEXT("en-US", "Inactive");
+        UA_Variant_setScalar(&vattr.value, &fs, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "FalseState");
+        vattr.dataType = UA_TYPES[UA_TYPES_LOCALIZEDTEXT].typeId;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Alarm.FalseState"),
+            i->alarm_node, UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+            UA_QUALIFIEDNAME(0, "FalseState"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+            vattr, NULL, NULL);
+    }
+
+    /* Demo.Temperature — Variable with Description attribute */
+    {
+        UA_VariableAttributes vattr = UA_VariableAttributes_default;
+        UA_Double v = 36.6;
+        UA_Variant_setScalar(&vattr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+        vattr.displayName = UA_LOCALIZEDTEXT("en-US", "Temperature");
+        vattr.description = UA_LOCALIZEDTEXT("en-US", "Process temperature sensor");
+        vattr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+        vattr.dataType = UA_TYPES[UA_TYPES_DOUBLE].typeId;
+        UA_Server_addVariableNode(server, UA_NODEID_STRING(2, "Demo.Temperature"),
+            folder_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+            UA_QUALIFIEDNAME(2, "Temperature"),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+            vattr, NULL, NULL);
+    }
+
+    /* Make Demo folder event-notifiable. */
+    UA_Server_writeEventNotifier(server, folder_id,
+                                 UA_EVENTNOTIFIERTYPE_SUBSCRIBETOEVENTS);
 }
 
 /* ------------------------------------------------------------------
@@ -379,6 +496,70 @@ void sn_opcua_test_server_set_counter(RtOpcUaTestServer *s, long long value) {
     UA_Server_writeValue(i->server, i->counter_node, var);
 }
 
+void sn_opcua_test_server_set_analog(RtOpcUaTestServer *s, double value) {
+    if (!s) return;
+    OpcUaTestServerInternal *i = tsi(s);
+    if (!i || !i->server) return;
+    UA_Double v = value;
+    UA_Variant var;
+    UA_Variant_setScalar(&var, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
+    UA_Server_writeValue(i->server, i->analog_node, var);
+}
+
+void sn_opcua_test_server_set_alarm(RtOpcUaTestServer *s, bool active) {
+    if (!s) return;
+    OpcUaTestServerInternal *i = tsi(s);
+    if (!i || !i->server) return;
+    UA_Boolean v = active ? UA_TRUE : UA_FALSE;
+    UA_Variant var;
+    UA_Variant_setScalar(&var, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    UA_Server_writeValue(i->server, i->alarm_node, var);
+}
+
+void sn_opcua_test_server_trigger_event(RtOpcUaTestServer *s, long long severity, char *message) {
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    if (!s) return;
+    OpcUaTestServerInternal *i = tsi(s);
+    if (!i || !i->server) return;
+
+    UA_NodeId eventNodeId;
+    UA_StatusCode rc = UA_Server_createEvent(i->server,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE), &eventNodeId);
+    if (rc != UA_STATUSCODE_GOOD) {
+        fprintf(stderr, "TestServer: createEvent failed: %s\n", UA_StatusCode_name(rc));
+        return;
+    }
+
+    /* Severity (UInt16) */
+    UA_UInt16 sev = (UA_UInt16)severity;
+    UA_Server_writeObjectProperty_scalar(i->server, eventNodeId,
+        UA_QUALIFIEDNAME(0, "Severity"), &sev, &UA_TYPES[UA_TYPES_UINT16]);
+
+    /* Message (LocalizedText) */
+    UA_LocalizedText msg = UA_LOCALIZEDTEXT("en-US", message ? message : "");
+    UA_Server_writeObjectProperty_scalar(i->server, eventNodeId,
+        UA_QUALIFIEDNAME(0, "Message"), &msg, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+
+    /* SourceName (String) */
+    UA_String srcName = UA_STRING("Demo");
+    UA_Server_writeObjectProperty_scalar(i->server, eventNodeId,
+        UA_QUALIFIEDNAME(0, "SourceName"), &srcName, &UA_TYPES[UA_TYPES_STRING]);
+
+    /* Time (DateTime) */
+    UA_DateTime now = UA_DateTime_now();
+    UA_Server_writeObjectProperty_scalar(i->server, eventNodeId,
+        UA_QUALIFIEDNAME(0, "Time"), &now, &UA_TYPES[UA_TYPES_DATETIME]);
+
+    /* Trigger on Demo folder. */
+    rc = UA_Server_triggerEvent(i->server, eventNodeId, i->demo_folder_id, NULL, UA_TRUE);
+    if (rc != UA_STATUSCODE_GOOD) {
+        fprintf(stderr, "TestServer: triggerEvent failed: %s\n", UA_StatusCode_name(rc));
+    }
+#else
+    (void)s; (void)severity; (void)message;
+#endif
+}
+
 void sn_opcua_test_server_stop(RtOpcUaTestServer *s) {
     if (!s) return;
     OpcUaTestServerInternal *i = tsi(s);
@@ -410,6 +591,9 @@ void sn_opcua_test_server_dispose(RtOpcUaTestServer *s) {
     }
     if (i->server) UA_Server_delete(i->server);
     UA_NodeId_clear(&i->counter_node);
+    UA_NodeId_clear(&i->analog_node);
+    UA_NodeId_clear(&i->alarm_node);
+    UA_NodeId_clear(&i->demo_folder_id);
     free(i);
     s->internal_ptr = 0;
 }

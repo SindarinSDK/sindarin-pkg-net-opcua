@@ -1,0 +1,61 @@
+# ==============================================================================
+# test_opcua_type_definition.sn - Verify type definitions and reference types
+# ==============================================================================
+
+import "../src/opcua"
+import "./opcua_test_server"
+
+fn test_type_definitions(): void =>
+  print("test_type_definitions: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14890, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  var refs: OpcUaReferenceDescription[] = client.browse(OpcUaNodeId.stringId(2, "Demo"))
+
+  for r in refs =>
+    var name: str = r.browseName()
+    var typeDef: OpcUaNodeId = r.typeDefinition()
+    var refType: OpcUaNodeId = r.referenceTypeId()
+
+    # AnalogItemType = ns=0;i=2368
+    if name == "Analog" =>
+      assert(typeDef.toString() == "ns=0;i=2368", $"Analog typeDef should be AnalogItemType, got {typeDef.toString()}")
+
+    # TwoStateDiscreteType = ns=0;i=2373
+    if name == "Alarm" =>
+      assert(typeDef.toString() == "ns=0;i=2373", $"Alarm typeDef should be TwoStateDiscreteType, got {typeDef.toString()}")
+
+    # BaseDataVariableType = ns=0;i=63
+    if name == "Int32" =>
+      assert(typeDef.toString() == "ns=0;i=63", $"Int32 typeDef should be BaseDataVariableType, got {typeDef.toString()}")
+
+    # All component children use HasComponent (ns=0;i=47)
+    if name == "Int32" || name == "Double" || name == "String" || name == "Counter" || name == "Analog" || name == "Alarm" || name == "Temperature" =>
+      assert(refType.toString() == "ns=0;i=47", $"{name} refType should be HasComponent, got {refType.toString()}")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_analog_properties(): void =>
+  print("test_analog_properties: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14891, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  var refs: OpcUaReferenceDescription[] = client.browse(OpcUaNodeId.stringId(2, "Demo.Analog"))
+  var hasEURange: bool = false
+  var hasEU: bool = false
+  for r in refs =>
+    if r.browseName() == "EURange" => hasEURange = true
+    if r.browseName() == "EngineeringUnits" => hasEU = true
+
+  assert(hasEURange, "Demo.Analog should have EURange property")
+  assert(hasEU, "Demo.Analog should have EngineeringUnits property")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_type_definitions()
+  test_analog_properties()

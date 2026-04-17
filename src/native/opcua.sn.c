@@ -144,6 +144,9 @@ typedef __sn__OpcUaMonitoredItem         RtOpcUaMonitoredItem;
 typedef __sn__OpcUaSubscription          RtOpcUaSubscription;
 typedef __sn__OpcUaClientConfig          RtOpcUaClientConfig;
 typedef __sn__OpcUaClient                RtOpcUaClient;
+typedef __sn__OpcUaSelectClause          RtOpcUaSelectClause;
+typedef __sn__OpcUaEventFilter           RtOpcUaEventFilter;
+typedef __sn__OpcUaEventNotification     RtOpcUaEventNotification;
 
 /* ============================================================================
  * String / array helpers
@@ -1265,6 +1268,16 @@ RtOpcUaNodeId *sn_opcua_reference_description_node_id(RtOpcUaReferenceDescriptio
     return (RtOpcUaNodeId *)__sn__OpcUaNodeId_retain(r->node_id);
 }
 
+RtOpcUaNodeId *sn_opcua_reference_description_reference_type_id(RtOpcUaReferenceDescription *r) {
+    if (!r) return sn_opcua_node_id_numeric(0, 0);
+    return (RtOpcUaNodeId *)__sn__OpcUaNodeId_retain(r->reference_type_id);
+}
+
+RtOpcUaNodeId *sn_opcua_reference_description_type_definition(RtOpcUaReferenceDescription *r) {
+    if (!r) return sn_opcua_node_id_numeric(0, 0);
+    return (RtOpcUaNodeId *)__sn__OpcUaNodeId_retain(r->type_definition);
+}
+
 char *sn_opcua_reference_description_browse_name(RtOpcUaReferenceDescription *r) {
     return r && r->browse_name ? strdup(r->browse_name) : strdup("");
 }
@@ -1395,12 +1408,30 @@ typedef struct OpcUaEventNode {
     struct OpcUaEventNode *next;
 } OpcUaEventNode;
 
+/* Event notification queue node (parallel to OpcUaEventNode for data changes). */
+typedef struct OpcUaEventNotifNode {
+    size_t         field_count;
+    UA_Variant    *fields;   /* heap array of field_count deep-copied variants */
+    struct OpcUaEventNotifNode *next;
+} OpcUaEventNotifNode;
+
+/* Internal data for OpcUaEventNotification Sindarin wrapper. */
+typedef struct {
+    size_t      field_count;
+    UA_Variant *fields;
+} OpcUaEventNotifInternal;
+
 typedef struct {
     opcua_mutex_t    mutex;
     opcua_cond_t     cond;
+    /* Data-change event queue */
     OpcUaEventNode  *head;
     OpcUaEventNode  *tail;
     size_t           count;
+    /* Event notification queue */
+    OpcUaEventNotifNode *evt_head;
+    OpcUaEventNotifNode *evt_tail;
+    size_t               evt_count;
     UA_UInt32        subscription_id;
     bool             deleted;
     struct RtOpcUaClient *client;  /* weak back-pointer */
@@ -1444,6 +1475,43 @@ static OpcUaEventNode *opcua_event_queue_pop(OpcUaSubscriptionInternal *si, int 
     return node;
 }
 
+static void opcua_event_notif_queue_push(OpcUaSubscriptionInternal *si, OpcUaEventNotifNode *node) {
+    OPCUA_MUTEX_LOCK(&si->mutex);
+    if (si->evt_count >= OPCUA_EVENT_QUEUE_MAX) {
+        OpcUaEventNotifNode *drop = si->evt_head;
+        si->evt_head = drop->next;
+        if (!si->evt_head) si->evt_tail = NULL;
+        si->evt_count--;
+        if (drop->fields) {
+            for (size_t k = 0; k < drop->field_count; k++)
+                UA_Variant_clear(&drop->fields[k]);
+            UA_free(drop->fields);
+        }
+        free(drop);
+    }
+    node->next = NULL;
+    if (si->evt_tail) { si->evt_tail->next = node; si->evt_tail = node; }
+    else { si->evt_head = si->evt_tail = node; }
+    si->evt_count++;
+    OPCUA_COND_SIGNAL(&si->cond);
+    OPCUA_MUTEX_UNLOCK(&si->mutex);
+}
+
+static OpcUaEventNotifNode *opcua_event_notif_queue_pop(OpcUaSubscriptionInternal *si, int timeout_ms) {
+    OPCUA_MUTEX_LOCK(&si->mutex);
+    if (si->evt_count == 0 && timeout_ms > 0 && !si->deleted) {
+        OPCUA_COND_TIMEDWAIT(&si->cond, &si->mutex, timeout_ms);
+    }
+    OpcUaEventNotifNode *node = si->evt_head;
+    if (node) {
+        si->evt_head = node->next;
+        if (!si->evt_head) si->evt_tail = NULL;
+        si->evt_count--;
+    }
+    OPCUA_MUTEX_UNLOCK(&si->mutex);
+    return node;
+}
+
 /* ============================================================================
  * OpcUaMonitoredItem internals
  * ============================================================================ */
@@ -1475,6 +1543,25 @@ opcua_data_change_callback(UA_Client *client, UA_UInt32 subId, void *subContext,
     node->status = value ? value->status : UA_STATUSCODE_GOOD;
 
     opcua_event_queue_push(ctx->sub_internal, node);
+}
+
+static void
+opcua_event_notification_callback(UA_Client *client, UA_UInt32 subId, void *subContext,
+                                   UA_UInt32 monId, void *monContext,
+                                   size_t nEventFields, UA_Variant *eventFields) {
+    (void)client; (void)subContext; (void)subId; (void)monId;
+    OpcUaMonitoredItemContext *ctx = (OpcUaMonitoredItemContext *)monContext;
+    if (!ctx || !ctx->sub_internal) return;
+
+    OpcUaEventNotifNode *node = (OpcUaEventNotifNode *)calloc(1, sizeof(*node));
+    node->field_count = nEventFields;
+    if (nEventFields > 0) {
+        node->fields = (UA_Variant *)UA_Array_new(nEventFields, &UA_TYPES[UA_TYPES_VARIANT]);
+        for (size_t k = 0; k < nEventFields; k++) {
+            UA_Variant_copy(&eventFields[k], &node->fields[k]);
+        }
+    }
+    opcua_event_notif_queue_push(ctx->sub_internal, node);
 }
 
 static long long opcua_ua_datetime_to_unix_ms(UA_DateTime t) {
@@ -1571,6 +1658,309 @@ RtOpcUaMonitoredItem *sn_opcua_subscription_monitor_data_change(
     return m;
 }
 
+RtOpcUaMonitoredItem *sn_opcua_subscription_monitor_data_change_filtered(
+    RtOpcUaSubscription *sub, RtOpcUaNodeId *nodeId,
+    double samplingIntervalMs, long long queueSize,
+    long long deadbandType, double deadbandValue) {
+    if (!sub) return NULL;
+    RtOpcUaClient *client = (RtOpcUaClient *)(uintptr_t)sub->client_ptr;
+
+    UA_MonitoredItemCreateRequest req = UA_MonitoredItemCreateRequest_default(
+        opcua_to_ua_node_id(nodeId));
+    if (samplingIntervalMs >= 0.0)
+        req.requestedParameters.samplingInterval = samplingIntervalMs;
+    req.requestedParameters.queueSize = (UA_UInt32)(queueSize > 0 ? queueSize : 1);
+    req.requestedParameters.discardOldest = UA_TRUE;
+
+    /* Build DataChangeFilter with deadband. */
+    UA_DataChangeFilter dcf;
+    UA_DataChangeFilter_init(&dcf);
+    dcf.trigger       = UA_DATACHANGETRIGGER_STATUSVALUE;
+    dcf.deadbandType  = (UA_UInt32)deadbandType;
+    dcf.deadbandValue = deadbandValue;
+    UA_ExtensionObject_setValueCopy(&req.requestedParameters.filter,
+                                     &dcf, &UA_TYPES[UA_TYPES_DATACHANGEFILTER]);
+
+    OpcUaMonitoredItemContext *ctx =
+        (OpcUaMonitoredItemContext *)calloc(1, sizeof(*ctx));
+    ctx->sub_internal = opcua_sub_internal(sub);
+
+    opcua_client_lock(client);
+    UA_Client *ua = opcua_client_ua(client);
+    UA_MonitoredItemCreateResult result =
+        UA_Client_MonitoredItems_createDataChange(ua, (UA_UInt32)sub->subscription_id,
+            UA_TIMESTAMPSTORETURN_BOTH, req, ctx, opcua_data_change_callback, NULL);
+    opcua_client_unlock(client);
+
+    UA_NodeId_clear(&req.itemToMonitor.nodeId);
+    UA_ExtensionObject_clear(&req.requestedParameters.filter);
+
+    if (result.statusCode != UA_STATUSCODE_GOOD) {
+        fprintf(stderr, "OpcUaSubscription.monitorFiltered: %s\n",
+                UA_StatusCode_name(result.statusCode));
+        free(ctx);
+        return NULL;
+    }
+    ctx->monitored_item_id = result.monitoredItemId;
+
+    RtOpcUaMonitoredItem *m = __sn__OpcUaMonitoredItem__new();
+    m->id               = (long long)result.monitoredItemId;
+    m->subscription_ptr = (long long)(uintptr_t)sub;
+    m->client_ptr       = (long long)(uintptr_t)client;
+    return m;
+}
+
+/* ============================================================================
+ * Event subscription: monitorEvents + nextEventNotification
+ * ============================================================================ */
+
+RtOpcUaMonitoredItem *sn_opcua_subscription_monitor_event(
+    RtOpcUaSubscription *sub, RtOpcUaNodeId *nodeId, RtOpcUaEventFilter *filter) {
+    if (!sub || !nodeId || !filter) return NULL;
+    RtOpcUaClient *client = (RtOpcUaClient *)(uintptr_t)sub->client_ptr;
+
+    UA_EventFilter *ef = (UA_EventFilter *)(uintptr_t)filter->internal_ptr;
+    if (!ef) return NULL;
+
+    UA_MonitoredItemCreateRequest req;
+    UA_MonitoredItemCreateRequest_init(&req);
+    req.itemToMonitor.nodeId = opcua_to_ua_node_id(nodeId);
+    req.itemToMonitor.attributeId = UA_ATTRIBUTEID_EVENTNOTIFIER;
+    req.monitoringMode = UA_MONITORINGMODE_REPORTING;
+    req.requestedParameters.samplingInterval = 0.0;
+    req.requestedParameters.queueSize = 100;
+    req.requestedParameters.discardOldest = UA_TRUE;
+
+    UA_ExtensionObject_setValueCopy(&req.requestedParameters.filter,
+                                     ef, &UA_TYPES[UA_TYPES_EVENTFILTER]);
+
+    OpcUaMonitoredItemContext *ctx =
+        (OpcUaMonitoredItemContext *)calloc(1, sizeof(*ctx));
+    ctx->sub_internal = opcua_sub_internal(sub);
+
+    opcua_client_lock(client);
+    UA_Client *ua = opcua_client_ua(client);
+    UA_MonitoredItemCreateResult result =
+        UA_Client_MonitoredItems_createEvent(ua, (UA_UInt32)sub->subscription_id,
+            UA_TIMESTAMPSTORETURN_BOTH, req, ctx,
+            opcua_event_notification_callback, NULL);
+    opcua_client_unlock(client);
+
+    UA_MonitoredItemCreateRequest_clear(&req);
+
+    if (result.statusCode != UA_STATUSCODE_GOOD) {
+        fprintf(stderr, "OpcUaSubscription.monitorEvents: %s\n",
+                UA_StatusCode_name(result.statusCode));
+        free(ctx);
+        return NULL;
+    }
+    ctx->monitored_item_id = result.monitoredItemId;
+
+    RtOpcUaMonitoredItem *m = __sn__OpcUaMonitoredItem__new();
+    m->id               = (long long)result.monitoredItemId;
+    m->subscription_ptr = (long long)(uintptr_t)sub;
+    m->client_ptr       = (long long)(uintptr_t)client;
+    return m;
+}
+
+RtOpcUaEventNotification *sn_opcua_subscription_next_event_notification(
+    RtOpcUaSubscription *sub, long long timeoutMs) {
+    RtOpcUaEventNotification *notif = __sn__OpcUaEventNotification__new();
+    if (!sub) {
+        notif->is_empty = 1;
+        notif->field_count = 0;
+        notif->internal_ptr = 0;
+        return notif;
+    }
+    OpcUaSubscriptionInternal *si = opcua_sub_internal(sub);
+    OpcUaEventNotifNode *node = opcua_event_notif_queue_pop(si, (int)timeoutMs);
+    if (!node) {
+        notif->is_empty = 1;
+        notif->field_count = 0;
+        notif->internal_ptr = 0;
+        return notif;
+    }
+    OpcUaEventNotifInternal *ei = (OpcUaEventNotifInternal *)calloc(1, sizeof(*ei));
+    ei->field_count = node->field_count;
+    ei->fields = node->fields;
+    node->fields = NULL;  /* transfer ownership */
+    free(node);
+
+    notif->is_empty = 0;
+    notif->field_count = (long long)ei->field_count;
+    notif->internal_ptr = (long long)(uintptr_t)ei;
+    return notif;
+}
+
+/* ============================================================================
+ * OpcUaEventNotification accessors
+ * ============================================================================ */
+
+long long sn_opcua_event_notification_field_count(RtOpcUaEventNotification *n) {
+    return n ? n->field_count : 0;
+}
+
+bool sn_opcua_event_notification_is_empty(RtOpcUaEventNotification *n) {
+    return n ? (n->is_empty != 0) : true;
+}
+
+RtOpcUaVariant *sn_opcua_event_notification_field(RtOpcUaEventNotification *n, long long index) {
+    if (!n || n->internal_ptr == 0) return sn_opcua_variant_null();
+    OpcUaEventNotifInternal *ei = (OpcUaEventNotifInternal *)(uintptr_t)n->internal_ptr;
+    if (index < 0 || (size_t)index >= ei->field_count) return sn_opcua_variant_null();
+
+    UA_Variant *v = (UA_Variant *)UA_Variant_new();
+    UA_Variant_copy(&ei->fields[index], v);
+    return opcua_wrap_variant_take(v);
+}
+
+void sn_opcua_event_notification_dispose(RtOpcUaEventNotification *n) {
+    if (!n || n->internal_ptr == 0) return;
+    OpcUaEventNotifInternal *ei = (OpcUaEventNotifInternal *)(uintptr_t)n->internal_ptr;
+    if (ei->fields) {
+        for (size_t k = 0; k < ei->field_count; k++)
+            UA_Variant_clear(&ei->fields[k]);
+        UA_free(ei->fields);
+    }
+    free(ei);
+    n->internal_ptr = 0;
+}
+
+/* ============================================================================
+ * OpcUaSelectClause
+ * ============================================================================ */
+
+RtOpcUaSelectClause *sn_opcua_select_clause_field(char *browsePath) {
+    UA_SimpleAttributeOperand *op = UA_SimpleAttributeOperand_new();
+    op->typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE);
+    op->browsePathSize = 1;
+    op->browsePath = (UA_QualifiedName *)UA_Array_new(1, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
+    op->browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, browsePath ? browsePath : "");
+    op->attributeId = UA_ATTRIBUTEID_VALUE;
+
+    RtOpcUaSelectClause *sc = __sn__OpcUaSelectClause__new();
+    sc->internal_ptr = (long long)(uintptr_t)op;
+    return sc;
+}
+
+RtOpcUaSelectClause *sn_opcua_select_clause_nested_field(char *browsePath, char *subPath) {
+    UA_SimpleAttributeOperand *op = UA_SimpleAttributeOperand_new();
+    op->typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE);
+    op->browsePathSize = 2;
+    op->browsePath = (UA_QualifiedName *)UA_Array_new(2, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
+    op->browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, browsePath ? browsePath : "");
+    op->browsePath[1] = UA_QUALIFIEDNAME_ALLOC(0, subPath ? subPath : "");
+    op->attributeId = UA_ATTRIBUTEID_VALUE;
+
+    RtOpcUaSelectClause *sc = __sn__OpcUaSelectClause__new();
+    sc->internal_ptr = (long long)(uintptr_t)op;
+    return sc;
+}
+
+RtOpcUaSelectClause *sn_opcua_select_clause_custom(
+    RtOpcUaNodeId *typeDefId, SnArray *browsePaths, long long attributeId) {
+    UA_SimpleAttributeOperand *op = UA_SimpleAttributeOperand_new();
+    op->typeDefinitionId = opcua_to_ua_node_id(typeDefId);
+    size_t n = browsePaths ? (size_t)browsePaths->len : 0;
+    op->browsePathSize = n;
+    if (n > 0) {
+        op->browsePath = (UA_QualifiedName *)UA_Array_new(n, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]);
+        for (size_t k = 0; k < n; k++) {
+            char **s = (char **)sn_array_get(browsePaths, (long long)k);
+            op->browsePath[k] = UA_QUALIFIEDNAME_ALLOC(0, (s && *s) ? *s : "");
+        }
+    }
+    op->attributeId = (UA_UInt32)attributeId;
+
+    RtOpcUaSelectClause *sc = __sn__OpcUaSelectClause__new();
+    sc->internal_ptr = (long long)(uintptr_t)op;
+    return sc;
+}
+
+void sn_opcua_select_clause_dispose(RtOpcUaSelectClause *sc) {
+    if (!sc || sc->internal_ptr == 0) return;
+    UA_SimpleAttributeOperand *op = (UA_SimpleAttributeOperand *)(uintptr_t)sc->internal_ptr;
+    UA_SimpleAttributeOperand_delete(op);
+    sc->internal_ptr = 0;
+}
+
+/* ============================================================================
+ * OpcUaEventFilter
+ * ============================================================================ */
+
+RtOpcUaEventFilter *sn_opcua_event_filter_select(SnArray *clauses) {
+    size_t n = clauses ? (size_t)clauses->len : 0;
+    UA_EventFilter *ef = UA_EventFilter_new();
+    ef->selectClausesSize = n;
+    if (n > 0) {
+        ef->selectClauses = (UA_SimpleAttributeOperand *)UA_Array_new(
+            n, &UA_TYPES[UA_TYPES_SIMPLEATTRIBUTEOPERAND]);
+        for (size_t k = 0; k < n; k++) {
+            RtOpcUaSelectClause **scp = (RtOpcUaSelectClause **)sn_array_get(clauses, (long long)k);
+            if (scp && *scp && (*scp)->internal_ptr) {
+                UA_SimpleAttributeOperand *src =
+                    (UA_SimpleAttributeOperand *)(uintptr_t)((*scp)->internal_ptr);
+                UA_SimpleAttributeOperand_copy(src, &ef->selectClauses[k]);
+            }
+        }
+    }
+
+    RtOpcUaEventFilter *f = __sn__OpcUaEventFilter__new();
+    f->internal_ptr = (long long)(uintptr_t)ef;
+    return f;
+}
+
+RtOpcUaEventFilter *sn_opcua_event_filter_alarm(void) {
+    UA_EventFilter *ef = UA_EventFilter_new();
+    ef->selectClausesSize = 8;
+    ef->selectClauses = (UA_SimpleAttributeOperand *)UA_Array_new(
+        8, &UA_TYPES[UA_TYPES_SIMPLEATTRIBUTEOPERAND]);
+
+    /* Helper: single-segment select clause from BaseEventType. */
+    #define ALARM_CLAUSE_1(idx, name) do { \
+        ef->selectClauses[idx].typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE); \
+        ef->selectClauses[idx].browsePathSize = 1; \
+        ef->selectClauses[idx].browsePath = \
+            (UA_QualifiedName *)UA_Array_new(1, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]); \
+        ef->selectClauses[idx].browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, name); \
+        ef->selectClauses[idx].attributeId = UA_ATTRIBUTEID_VALUE; \
+    } while(0)
+
+    /* Helper: two-segment select clause. */
+    #define ALARM_CLAUSE_2(idx, seg1, seg2) do { \
+        ef->selectClauses[idx].typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE); \
+        ef->selectClauses[idx].browsePathSize = 2; \
+        ef->selectClauses[idx].browsePath = \
+            (UA_QualifiedName *)UA_Array_new(2, &UA_TYPES[UA_TYPES_QUALIFIEDNAME]); \
+        ef->selectClauses[idx].browsePath[0] = UA_QUALIFIEDNAME_ALLOC(0, seg1); \
+        ef->selectClauses[idx].browsePath[1] = UA_QUALIFIEDNAME_ALLOC(0, seg2); \
+        ef->selectClauses[idx].attributeId = UA_ATTRIBUTEID_VALUE; \
+    } while(0)
+
+    ALARM_CLAUSE_1(0, "EventId");
+    ALARM_CLAUSE_1(1, "EventType");
+    ALARM_CLAUSE_1(2, "SourceName");
+    ALARM_CLAUSE_1(3, "Time");
+    ALARM_CLAUSE_1(4, "Message");
+    ALARM_CLAUSE_1(5, "Severity");
+    ALARM_CLAUSE_2(6, "ActiveState", "Id");
+    ALARM_CLAUSE_2(7, "AckedState",  "Id");
+
+    #undef ALARM_CLAUSE_1
+    #undef ALARM_CLAUSE_2
+
+    RtOpcUaEventFilter *f = __sn__OpcUaEventFilter__new();
+    f->internal_ptr = (long long)(uintptr_t)ef;
+    return f;
+}
+
+void sn_opcua_event_filter_dispose(RtOpcUaEventFilter *f) {
+    if (!f || f->internal_ptr == 0) return;
+    UA_EventFilter *ef = (UA_EventFilter *)(uintptr_t)f->internal_ptr;
+    UA_EventFilter_delete(ef);
+    f->internal_ptr = 0;
+}
+
 RtOpcUaDataChangeEvent *sn_opcua_subscription_next_event(RtOpcUaSubscription *sub, long long timeoutMs) {
     RtOpcUaDataChangeEvent *ev = __sn__OpcUaDataChangeEvent__new();
     if (!sub) {
@@ -1635,13 +2025,25 @@ void sn_opcua_subscription_dispose(RtOpcUaSubscription *sub) {
     OpcUaSubscriptionInternal *si = opcua_sub_internal(sub);
     if (!si) return;
 
-    /* Drain any remaining events. */
+    /* Drain any remaining data-change events. */
     OpcUaEventNode *n = si->head;
     while (n) {
         OpcUaEventNode *next = n->next;
         if (n->value) { UA_Variant_clear(n->value); UA_free(n->value); }
         free(n);
         n = next;
+    }
+    /* Drain any remaining event notifications. */
+    OpcUaEventNotifNode *en = si->evt_head;
+    while (en) {
+        OpcUaEventNotifNode *enext = en->next;
+        if (en->fields) {
+            for (size_t k = 0; k < en->field_count; k++)
+                UA_Variant_clear(&en->fields[k]);
+            UA_free(en->fields);
+        }
+        free(en);
+        en = enext;
     }
     OPCUA_MUTEX_DESTROY(&si->mutex);
     OPCUA_COND_DESTROY(&si->cond);

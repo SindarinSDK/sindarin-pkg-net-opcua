@@ -465,6 +465,14 @@ native struct OpcUaReferenceDescription as ref =>
   @alias "sn_opcua_reference_description_is_forward"
   native fn isForward(): bool
 
+  # The reference type used (HasComponent, HasProperty, Organizes, etc.).
+  fn referenceTypeId(): OpcUaNodeId =>
+    return sn_opcua_reference_description_reference_type_id(self)
+
+  # The type definition of the target node (BaseDataVariableType, AnalogItemType, etc.).
+  fn typeDefinition(): OpcUaNodeId =>
+    return sn_opcua_reference_description_type_definition(self)
+
   @alias "sn_opcua_reference_description_dispose"
   native fn dispose(): void
 
@@ -678,10 +686,25 @@ native struct OpcUaSubscription as ref =>
   fn monitor(nodeId: OpcUaNodeId): OpcUaMonitoredItem =>
     return sn_opcua_subscription_monitor_data_change(self, nodeId, -1.0, 1)
 
+  # Monitor with deadband filtering.
+  # deadbandType: 0=None, 1=Absolute, 2=Percent
+  # deadbandValue: threshold value
+  fn monitorDataChangeFiltered(nodeId: OpcUaNodeId, samplingIntervalMs: double, queueSize: int, deadbandType: int, deadbandValue: double): OpcUaMonitoredItem =>
+    return sn_opcua_subscription_monitor_data_change_filtered(self, nodeId, samplingIntervalMs, queueSize, deadbandType, deadbandValue)
+
   # Block up to timeoutMs for the next data-change event. Returns an empty
   # event (isEmpty() == true) on timeout.
   fn nextEvent(timeoutMs: int): OpcUaDataChangeEvent =>
     return sn_opcua_subscription_next_event(self, timeoutMs)
+
+  # Monitor events with a filter. nodeId should be an event-notifiable object.
+  fn monitorEvents(nodeId: OpcUaNodeId, filter: OpcUaEventFilter): OpcUaMonitoredItem =>
+    return sn_opcua_subscription_monitor_event(self, nodeId, filter)
+
+  # Block up to timeoutMs for the next event notification. Returns an empty
+  # notification (isEmpty() == true) on timeout.
+  fn nextEventNotification(timeoutMs: int): OpcUaEventNotification =>
+    return sn_opcua_subscription_next_event_notification(self, timeoutMs)
 
   # Delete the subscription on the server and stop pumping.
   @alias "sn_opcua_subscription_delete"
@@ -871,6 +894,85 @@ native struct OpcUaClient as ref =>
   native fn dispose(): void
 
 # ==============================================================================
+# OpcUaSelectClause - Event filter select clause
+# ==============================================================================
+# Wraps UA_SimpleAttributeOperand. Used to specify which event fields to return.
+
+@alias "RtOpcUaSelectClause"
+native struct OpcUaSelectClause as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  # Single-segment browse path from BaseEventType (e.g., "Severity", "Message").
+  static fn field(browsePath: str): OpcUaSelectClause =>
+    return sn_opcua_select_clause_field(browsePath)
+
+  # Two-segment browse path (e.g., "ActiveState", "Id").
+  static fn nestedField(browsePath: str, subPath: str): OpcUaSelectClause =>
+    return sn_opcua_select_clause_nested_field(browsePath, subPath)
+
+  # Full control: custom type definition, browse path array, attribute id.
+  static fn custom(typeDefId: OpcUaNodeId, browsePath: str[], attributeId: int): OpcUaSelectClause =>
+    return sn_opcua_select_clause_custom(typeDefId, browsePath, attributeId)
+
+  @alias "sn_opcua_select_clause_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaEventFilter - Event subscription filter
+# ==============================================================================
+# Wraps UA_EventFilter. Specifies which event fields to select.
+
+@alias "RtOpcUaEventFilter"
+native struct OpcUaEventFilter as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  # Build a filter from an array of select clauses (empty where clause).
+  static fn select(clauses: OpcUaSelectClause[]): OpcUaEventFilter =>
+    return sn_opcua_event_filter_select(clauses)
+
+  # Pre-built alarm filter selecting: EventId, EventType, SourceName, Time,
+  # Message, Severity, ActiveState/Id, AckedState/Id.
+  static fn alarmFilter(): OpcUaEventFilter =>
+    return sn_opcua_event_filter_alarm()
+
+  @alias "sn_opcua_event_filter_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
+# OpcUaEventNotification - Event subscription notification
+# ==============================================================================
+# Delivered from event subscriptions. Contains field values matching the
+# select clauses of the EventFilter.
+
+@alias "RtOpcUaEventNotification"
+native struct OpcUaEventNotification as ref =>
+  @alias "internal_ptr"
+  _internal_ptr: long
+
+  @alias "field_count"
+  _field_count: int
+
+  @alias "is_empty"
+  _is_empty: bool
+
+  # Number of fields (matches select clause count).
+  @alias "sn_opcua_event_notification_field_count"
+  native fn fieldCount(): int
+
+  # Get field value by index (0-based, matching the select clause order).
+  fn field(index: int): OpcUaVariant =>
+    return sn_opcua_event_notification_field(self, index)
+
+  # True if returned from a poll that timed out with no events queued.
+  @alias "sn_opcua_event_notification_is_empty"
+  native fn isEmpty(): bool
+
+  @alias "sn_opcua_event_notification_dispose"
+  native fn dispose(): void
+
+# ==============================================================================
 # Runtime Function Declarations
 # ==============================================================================
 
@@ -941,9 +1043,28 @@ native fn sn_opcua_application_description_discovery_urls(app: OpcUaApplicationD
 # OpcUaDataChangeEvent
 native fn sn_opcua_data_change_event_value(ev: OpcUaDataChangeEvent): OpcUaVariant
 
+# OpcUaReferenceDescription
+native fn sn_opcua_reference_description_reference_type_id(r: OpcUaReferenceDescription): OpcUaNodeId
+native fn sn_opcua_reference_description_type_definition(r: OpcUaReferenceDescription): OpcUaNodeId
+
 # OpcUaSubscription
 native fn sn_opcua_subscription_monitor_data_change(sub: OpcUaSubscription, nodeId: OpcUaNodeId, samplingIntervalMs: double, queueSize: int): OpcUaMonitoredItem
+native fn sn_opcua_subscription_monitor_data_change_filtered(sub: OpcUaSubscription, nodeId: OpcUaNodeId, samplingIntervalMs: double, queueSize: int, deadbandType: int, deadbandValue: double): OpcUaMonitoredItem
 native fn sn_opcua_subscription_next_event(sub: OpcUaSubscription, timeoutMs: int): OpcUaDataChangeEvent
+native fn sn_opcua_subscription_monitor_event(sub: OpcUaSubscription, nodeId: OpcUaNodeId, filter: OpcUaEventFilter): OpcUaMonitoredItem
+native fn sn_opcua_subscription_next_event_notification(sub: OpcUaSubscription, timeoutMs: int): OpcUaEventNotification
+
+# OpcUaSelectClause
+native fn sn_opcua_select_clause_field(browsePath: str): OpcUaSelectClause
+native fn sn_opcua_select_clause_nested_field(browsePath: str, subPath: str): OpcUaSelectClause
+native fn sn_opcua_select_clause_custom(typeDefId: OpcUaNodeId, browsePath: str[], attributeId: int): OpcUaSelectClause
+
+# OpcUaEventFilter
+native fn sn_opcua_event_filter_select(clauses: OpcUaSelectClause[]): OpcUaEventFilter
+native fn sn_opcua_event_filter_alarm(): OpcUaEventFilter
+
+# OpcUaEventNotification
+native fn sn_opcua_event_notification_field(notif: OpcUaEventNotification, index: int): OpcUaVariant
 
 # OpcUaClientConfig
 native fn sn_opcua_client_config_defaults(): OpcUaClientConfig

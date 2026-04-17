@@ -33,6 +33,15 @@ native struct OpcUaTestServer as ref =>
   @alias "sn_opcua_test_server_set_counter"
   native fn setCounter(value: int): void
 
+  @alias "sn_opcua_test_server_set_analog"
+  native fn setAnalog(value: double): void
+
+  @alias "sn_opcua_test_server_set_alarm"
+  native fn setAlarm(active: bool): void
+
+  fn triggerEvent(severity: int, message: str): void =>
+    sn_opcua_test_server_trigger_event(self, severity, message)
+
   @alias "sn_opcua_test_server_stop"
   native fn stop(): void
 
@@ -41,3 +50,4 @@ native struct OpcUaTestServer as ref =>
 
 native fn sn_opcua_test_server_start(port: int, mode: int): OpcUaTestServer
 native fn sn_opcua_test_server_url(srv: OpcUaTestServer): str
+native fn sn_opcua_test_server_trigger_event(srv: OpcUaTestServer, severity: int, message: str): void

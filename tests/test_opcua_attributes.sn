@@ -1,0 +1,53 @@
+# ==============================================================================
+# test_opcua_attributes.sn - Read extended attributes
+# ==============================================================================
+
+import "../src/opcua"
+import "./opcua_test_server"
+
+fn test_read_description(): void =>
+  print("test_read_description: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14895, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  # Attribute 5 = Description (LocalizedText)
+  var desc: OpcUaVariant = client.readAttribute(OpcUaNodeId.stringId(2, "Demo.Temperature"), 5)
+  assert(!desc.isNull(), "Description attribute should be readable")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_read_datatype(): void =>
+  print("test_read_datatype: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14896, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  # Attribute 14 = DataType (NodeId)
+  # Demo.Analog is Double = ns=0;i=11
+  var dt: OpcUaVariant = client.readAttribute(OpcUaNodeId.stringId(2, "Demo.Analog"), 14)
+  assert(!dt.isNull(), "DataType attribute should be readable")
+  var dtNodeId: OpcUaNodeId = dt.asNodeId()
+  assert(dtNodeId.toString() == "ns=0;i=11", $"Demo.Analog DataType should be Double (ns=0;i=11), got {dtNodeId.toString()}")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn test_read_sampling_interval(): void =>
+  print("test_read_sampling_interval: ")
+  var server: OpcUaTestServer = OpcUaTestServer.start(14897, 0)
+  var client: OpcUaClient = OpcUaClient.connect(server.url())
+
+  # Attribute 19 = MinimumSamplingInterval
+  var msi: OpcUaVariant = client.readAttribute(OpcUaNodeId.stringId(2, "Demo.Analog"), 19)
+  assert(!msi.isNull(), "MinimumSamplingInterval should be readable")
+
+  client.disconnect()
+  server.stop()
+  print("PASS\n")
+
+fn main(): void =>
+  test_read_description()
+  test_read_datatype()
+  test_read_sampling_interval()
