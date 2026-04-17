@@ -1230,6 +1230,17 @@ char *sn_opcua_variant_to_string(RtOpcUaVariant *v) {
                      ts.year, ts.month, ts.day, ts.hour, ts.min, ts.sec, ts.milliSec);
             return strdup(buf);
         }
+        if (u->type == &UA_TYPES[UA_TYPES_NODEID]) {
+            RtOpcUaNodeId *nid = opcua_from_ua_node_id((UA_NodeId *)u->data);
+            char *s = sn_opcua_node_id_to_string(nid);
+            return s;
+        }
+        if (u->type == &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]) {
+            return opcua_strdup_ua_string(&((UA_LocalizedText *)u->data)->text);
+        }
+        if (u->type == &UA_TYPES[UA_TYPES_QUALIFIEDNAME]) {
+            return opcua_strdup_ua_string(&((UA_QualifiedName *)u->data)->name);
+        }
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "<Variant typeKind=%d arrayLen=%zu>",
